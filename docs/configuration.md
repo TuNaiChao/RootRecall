@@ -223,6 +223,8 @@ quickstart 检测到未配 `DASHSCOPE_API_KEY` 会打印上面 a/b 两条路的�
 |---|---|---|
 | `DEEPSEEK_API_KEY` | LLM(默认模型) | 全部(必填) |
 | `DASHSCOPE_API_KEY` | embedding + reranker | 检索类工具(必填) |
+| `DASHSCOPE_BASE_URL` | embedding 端点(专属 MaaS 加速;留空走公共 `dashscope.aliyuncs.com`) | 可选;`.env.example` 团队默认已填 |
+| `DASHSCOPE_RERANK_URL` | reranker 端点(同上) | 可选;`.env.example` 团队默认已填 |
 | `GITHUB_TOKEN` | GitHub PR 抓取 | fetch_patch / patch-report(建议) |
 | `GERRIT_USERNAME` / `GERRIT_HTTP_PASSWORD` | Gerrit 私仓 | fetch_patch 抓 Gerrit 时 |
 
