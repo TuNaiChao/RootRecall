@@ -74,6 +74,10 @@ DEFAULT_LOCAL_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 DEFAULT_MAX_SEQ_LENGTH = 8192  # 本地:显式设!ST 默认 512 会静默截断
 DEFAULT_BATCH_SIZE = 16  # 本地批编码大小
 DEFAULT_BATCH_LIMIT = 10  # 远端每请求文本条数上限(DashScope v4=10)
+# 远端单条嵌入输入字符预算:provider 有单条 token 上限(text-embedding-v4 实测:密代码 ~12k 字符过、
+# 16k 死 → 8192 token;oui 表类可更密,取 8000 字符在**任何分词密度**下都安全)。超长 chunk 只截断
+# 送嵌的文本,LanceDB 存的 text 仍是全文,BM25(fts_text)也不受影响。0 = 不截断(自建 vLLM 无限长可用)
+DEFAULT_MAX_INPUT_CHARS = 8000
 
 # 各语言的行注释前缀(给 chunk_expansion 拼元数据头用)。未知语言兜底用 #。
 _COMMENT_PREFIX: dict[str, str] = {"python": "#", "c": "//", "cpp": "//"}
@@ -165,6 +169,7 @@ class RemoteEmbedder:
         dimensions: int | None = None,
         batch_limit: int = DEFAULT_BATCH_LIMIT,
         normalize: bool = True,
+        max_input_chars: int = DEFAULT_MAX_INPUT_CHARS,
     ):
         from openai import OpenAI  # 局部导入:远端模式才需要,也让 import 错误更定位
 
@@ -176,6 +181,7 @@ class RemoteEmbedder:
         self._dimensions = dimensions  # None 则不传(Qwen3 系列可设;bge-m3 必须不设,否则 400)
         self._batch_limit = batch_limit
         self._normalize = normalize
+        self._max_input_chars = max_input_chars
         self._dim_cache: int | None = None  # 首次 embed 后缓存维度
 
     def _raw_embed(self, texts: list[str]) -> list[list[float]]:
@@ -197,12 +203,19 @@ class RemoteEmbedder:
     @property
     def fingerprint(self) -> str:
         # base_url 进指纹:不同平台的同名模型向量不互通(本地 Qwen3-0.6B ≠ DashScope v4)
-        return f"openai_compatible|{self._model}|{self._base_url}|{self.dim}|{'l2' if self._normalize else 'raw'}"
+        # tc(截断预算)进指纹:预算变 = 超长 chunk 的向量变,不混
+        return (f"openai_compatible|{self._model}|{self._base_url}|{self.dim}"
+                f"|{'l2' if self._normalize else 'raw'}|tc{self._max_input_chars}")
 
     def embed_chunks(self, chunks: list[CodeChunk]) -> np.ndarray:
         texts = [expand_chunk_text(c) for c in chunks]
+        # 超长输入防御(踩坑实录:bluez v20 的大文件 chunk 展开后超 DashScope 单条 8192 token 上限,
+        # 整批 400 打死索引):只截断**送嵌入**的文本,LanceDB 里存的 text 仍是全文(read_function 不受影响)。
+        m = self._max_input_chars
+        if m and any(len(t) > m for t in texts):
+            texts = [t[:m] for t in texts]
         vecs: list[list[float]] = []
-        # 按 batch_limit 分批(远端 API 每请求条数有上限),逐批调、拼回
+        # 按 batch_limit 分批(远端 API 每请求文本条数有上限),逐批调、拼回
         for i in range(0, len(texts), self._batch_limit):
             vecs.extend(self._raw_embed(texts[i : i + self._batch_limit]))
         arr = np.asarray(vecs, dtype=np.float32)
@@ -315,6 +328,7 @@ def create_embedder(cfg) -> Embedder:
             dimensions=get("dimensions"),
             batch_limit=get("batch_limit", DEFAULT_BATCH_LIMIT),
             normalize=normalize,
+            max_input_chars=get("max_input_chars", DEFAULT_MAX_INPUT_CHARS),
         )
     if provider == "sentence_transformers":
         return LocalEmbedder(

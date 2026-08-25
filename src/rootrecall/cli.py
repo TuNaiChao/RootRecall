@@ -945,7 +945,22 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if getattr(args, "func", None):
-        return args.func(args)
+        try:
+            return args.func(args)
+        except OSError as e:
+            # 跨机拷 .env 的坑:ROOTRECALL_HOME 指向别的机器的家目录 → 数据落盘时深层 PermissionError。
+            # 只在出错路径与 ROOTRECALL_HOME 相关时给指路信息,其余 OSError 原样抛(不吞真 bug)。
+            import os
+
+            fn = str(getattr(e, "filename", "") or "")
+            rh = os.environ.get("ROOTRECALL_HOME", "")
+            if rh and fn and (rh.startswith(fn) or fn.startswith(rh.rstrip("/"))):
+                print(f"错误:路径不可访问({fn})。\n"
+                      f"  疑点:.env 里的 ROOTRECALL_HOME={rh} 指向本机不存在/无权限的路径"
+                      f"(多半是整份拷了别的机器的 .env)—— 改成本机路径,或删掉该行用仓内 data/,重跑。",
+                      file=sys.stderr)
+                return 1
+            raise
     parser.print_help()
     return 0
 

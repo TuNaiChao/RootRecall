@@ -158,3 +158,17 @@ def test_idempotent_rerun_upsert_no_reembed(env):
     assert rc == 0
     assert "已存在" in out
     assert _EMBEDS["n"] == first  # manifest 无变化 → 零重嵌
+
+
+def test_stale_rootrecall_home_friendly_error(env, monkeypatch):
+    """跨机拷 .env 的坑:ROOTRECALL_HOME 指向不可建路径(旧机家目录/文件占位)→
+    友好指路报错(rc=1),不再甩深层 PermissionError traceback。"""
+    blocker = env["tmp"] / "home-file"
+    blocker.write_text("占位文件", encoding="utf-8")
+    monkeypatch.setenv("ROOTRECALL_HOME", str(blocker / "share" / "rootrecall"))
+
+    v20 = _mk_repo(env["cb"] / "v20" / "bluez")
+    rc, out = _run("baseline", "add", str(v20), "--no-graph")
+    assert rc == 1
+    assert "ROOTRECALL_HOME" in out and "别的机器" in out
+    assert "Traceback" not in out

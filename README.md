@@ -38,10 +38,16 @@
 (domain-research 的联网调研走 opencode 原生 websearch/webfetch,不需要额外 key。)
 
 ```bash
+# uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 git clone https://github.com/TuNaiChao/RootRecall.git && cd RootRecall
 bash scripts/quickstart.sh    # 依赖 + .env 密钥 + 模型验证 + 代码仓总目录 + 接线自检(幂等,可重跑)
-uv run rootrecall install --global   # (推荐)注册进 ~/.config/opencode:任意目录 opencode 免接线
 ```
+
+> uv run rootrecall install --global   # 全局注册四件套(skills+MCP+agent块+AGENTS.md 路由段)→ 任意目录 opencode 免接线
+>
+> `install --global` **通常不用单独跑**:quickstart 第 [6/7] 步答 y(默认回车)时已自动执行同一条命令。单独跑它只在三种场景:当时答了 n、quickstart 时 opencode 还没装好、或 `git pull` 升级后想同步刷新四件套(幂等,重跑无害)。但这一步的效果**不可跳过** —— 四件套没装进 `~/.config/opencode/`,RootRecall 就只在仓库根目录启动时生效,任意目录问话不会路由;装没装好用 `opencode mcp list`(任意目录跑)看 `rootrecall ✓ connected` 即知。
 
 日常命令(quickstart 之外,`--help` 只列这些;进阶命令隐藏不删,全量见 [cli.md](docs/cli.md)):
 

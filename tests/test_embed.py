@@ -111,3 +111,30 @@ def test_factory_remote_without_apikey_raises():
 def test_factory_unknown_provider_raises():
     with pytest.raises(ValueError, match="未知 embedding provider"):
         create_embedder({"provider": "milvus", "api_key": "x"})
+
+
+def test_remote_embedder_truncates_oversized_input():
+    """超长 chunk 防御(bluez v20 踩坑实录:大文件 chunk 展开后超 DashScope 单条 8192 token 上限,
+    整批 400 打死索引):送嵌入的文本截到预算内;chunk 本体(入库 text)不动;指纹含截断预算。"""
+    import types
+
+    from rootrecall.services.code_index.chunker import CodeChunk
+    from rootrecall.services.code_index.embed import RemoteEmbedder
+
+    sent: dict = {}
+
+    def _fake_create(*, model, input, **kw):  # noqa: ANN001,ANN003 —— 仿 openai SDK 返回结构
+        sent["input"] = input
+        data = [types.SimpleNamespace(index=i, embedding=[0.1, 0.2, 0.3]) for i in range(len(input))]
+        return types.SimpleNamespace(data=data)
+
+    e = RemoteEmbedder(base_url="https://x", api_key="k", max_input_chars=100)
+    e._client = types.SimpleNamespace(embeddings=types.SimpleNamespace(create=_fake_create))
+    huge = CodeChunk(
+        id="big.c:big_fn", symbol="big_fn", kind="function", file="big.c", language="c",
+        start_line=1, end_line=9999, text="x" * 5000, content_hash="h", fts_text="big fn",
+    )
+    e.embed_chunks([huge])
+    assert all(len(t) <= 100 for t in sent["input"])  # 送嵌的已截断(不再 400)
+    assert len(huge.text) == 5000                     # chunk 本体不动,LanceDB 存的仍是全文
+    assert "tc100" in e.fingerprint                   # 截断预算进指纹(预算变=向量空间变)
