@@ -377,6 +377,23 @@ def merge_eval(upstream_base_ref: str, upstream_head_ref: str, *,
     head_sha = _run_git(repo, ["rev-parse", "--verify", upstream_head_ref]).strip()
     fork_sha = _run_git(repo, ["rev-parse", "--verify", fork_ref]).strip()
 
+    # 无共同祖先前置短路(2026-08-26 实测:deepin fork 是 squash 独立血统)—— merge-tree 对
+    # 无关历史直接拒绝(rc=128「拒绝合并无关的历史」),patch-id 对称差也失去参照,逐 commit
+    # 全落 uncertain,零信号还烧 max_commits 轮。提前一句话告诉 agent 地板不可用、改走语义
+    # 评估,别让它对着 5/5 uncertain 猜工具是不是坏了。
+    try:
+        mb = _run_git(repo, ["merge-base", fork_sha, head_sha]).strip()
+    except ValueError:
+        mb = ""
+    if not mb:
+        return {"repo": str(repo), "fork_ref": fork_ref,
+                "upstream_range": f"{upstream_base_ref}..{upstream_head_ref}",
+                "commits": [], "summary": {"total": 0},
+                "note": "fork 与上游无共同祖先(squashed/独立血统)—— patch-id 等价与 merge-tree "
+                        "地板均不可用,本工具到此为止。请直接逐 commit 语义评估:git show 读 diff + "
+                        "对照 fork 对应代码判断「fork 有没有这 bug/要不要这修」,标准参照 backport "
+                        "工作流(能干净 apply 只说明打得上,不说明该打)。"}
+
     notes: list[str] = []
     if not mt_available:
         notes.append("merge-tree 不可用(git < 2.38?),apply 检查回退 git apply --check 对当前 "

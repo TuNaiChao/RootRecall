@@ -715,6 +715,9 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
 
         Pass the file paths a patch/PR modifies. Graph-driven, no LLM. Needs the codebase graph built
         (`uv run rootrecall index <path> <name>`); returns a "not built" hint otherwise.
+        File-level by nature — great for leaf/small modules, low discrimination for core hubs
+        (hundreds of neighbors); when the result says so, switch to call_chain (symbol-level) for
+        the specific function you're changing.
         codebase: override which codebase's graph (default = this server's codebase; near-names
               fuzzy-resolved, list: `rootrecall baseline ls`).
         """
@@ -736,7 +739,18 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
             return f"算影响面失败({target}): {e}"
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
-        return (f"{cb_note}blast-radius(codebase={target},输入 {len(changed_files)} 文件):\n"
+        n_nodes = len(result.get("impacted_nodes") or [])
+        n_files = len(result.get("impacted_files") or [])
+        # 波及面过大提示(2026-08-26 实测:player.c 这类 core 模块文件级 BFS 出数百节点 +
+        # 8000 字符截断,对决策零鉴别力,agent 最终还是靠读代码)。此时明说「文件级不顶用,
+        # 换符号级 call_chain 定点」,别让 agent 对着一坨截断 JSON 硬啃。
+        big = bool(result.get("truncated")) or n_nodes > 50 or len(body) > 8000
+        hint = ("⚠️ 波及面过大" + ("(图侧已截断) " if result.get("truncated") else "")
+                + f"({n_nodes} 节点)——文件级视图对 core 模块无鉴别力(谁都连着谁)。"
+                "要判断「改这个函数会断谁」:改用 call_chain(symbol=<函数名>, direction=\"callers\") "
+                "定点查,或分批传 changed_files。\n") if big else ""
+        return (f"{cb_note}blast-radius(codebase={target},输入 {len(changed_files)} 文件 → 波及 "
+                f"{n_nodes} 节点 / {n_files} 文件):\n{hint}"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要完整波及面:分批传 changed_files(每次几个文件)重调')}")
 
     # ── ⑤b call_chain:符号中心的 N 跳调用链(仅 CALLS 边 + PageRank;P1.5 caller/callee 进适配层)
@@ -847,7 +861,10 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         backport it into the fork. Deterministic per-commit tri-state (no LLM): already_fixed (a git
         patch-id-equivalent commit already exists in the fork, via git --cherry-mark), recommend_merge
         (not in fork, applies cleanly), conflict (not in fork, apply fails), uncertain. Also returns
-        touched files/functions.
+        touched files/functions. SHORT-CIRCUITS with a guidance note when fork and upstream share NO
+        merge-base (squashed/independent lineage): both patch-id and merge-tree floors are unusable
+        there — evaluate each commit semantically instead (backport-style: read the diff, check the
+        fork's code for the same bug).
 
         This is the deterministic FLOOR — the 'is the fork actually affected / does it need this fix'
         relevance judgment is YOURS, using touched files/functions + search_codebase + call_chain
@@ -892,11 +909,15 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
         s = result.get("summary", {})
+        note = result.get("note") or ""
+        # note 提到正文首行(无共同祖先短路时整条价值就是这句指引,埋进 JSON 等于没说)
+        note_line = (note + "\n") if note else ""
         return (f"{cb_note}merge-eval(repo={repo_path}, fork={fork_ref}, codebase={target}, "
                 f"{upstream_base_ref}..{upstream_head_ref}): "
                 f"total={s.get('total', 0)} | already_fixed={s.get('already_fixed', 0)} "
                 f"| recommend_merge={s.get('recommend_merge', 0)} | conflict={s.get('conflict', 0)} "
                 f"| uncertain={s.get('uncertain', 0)}\n"
+                f"{note_line}"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要逐 commit 详情:传 concern_files 或缩小 ref 范围分批重调')}")
 
     # ── ⑤f when_introduced:bug 引入 commit 定位(SZZ 式;🟡#7,第 16 个 MCP 工具)──
@@ -1125,16 +1146,24 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
     # ── ⑥ validate_patch:补丁能否干净 apply(执行硬门,零 LLM)────────────────
     # harness 转向:把 validate_patch 暴露成工具,agent 改完/拿到 PR diff 后过这道硬门再信。
     @_tool("validate_patch")
-    async def validate_patch(patch: str, repo_path: str) -> str:
+    async def validate_patch(patch: str, repo_path: str, worktree: bool = False) -> str:
         """Execution gate (non-LLM): does this unified-diff patch apply cleanly to the repo working tree?
 
         Runs `git apply --check` forward (strict → --3way → patch -p1 fallback) — a deterministic hard
         gate before trusting a patch. Returns applies + method + git diagnostic. Use it to confirm a
         patch/PR you're about to merge, or a fix you just wrote, actually fits the target repo.
         repo_path: absolute path of the repo working tree to check against — or a registered
-        codebase/repo name (resolved via the repo registry / index manifest). (No reverse check here —
-        that needs the already-patched tree; the bug_rca workflow has the full forward+reverse validate.)
+        codebase/repo name (resolved via the repo registry / index manifest).
+
+        worktree=True (2026-08-26): validate the repo's CURRENT UNCOMMITTED CHANGES instead of a
+        supplied patch — captures ``git diff HEAD`` and reverse-``--check``s it against the working
+        tree. The tree already holds your edits, so forward is meaningless there (context moved);
+        reverse pass = the diff faithfully matches the tree state AND can be cleanly reverted. Call
+        this right after editing, before export_patch; ``patch:`` is ignored in this mode. Known
+        bounds (flagged in output): untracked NEW files aren't in ``git diff HEAD``; debian ``.pc/``
+        build artifacts are noise (export_patch strips them, this only warns).
         """
+        import subprocess
         from pathlib import Path
 
         from rootrecall.services.workspace.validate import validate_patch as _validate
@@ -1142,8 +1171,41 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         repo_path = _resolve_repo_path_arg(repo_path)
         if not Path(repo_path).is_dir():
             return f"repo_path 不是目录: {repo_path}"
+
+        if worktree:
+            def _git(args: list[str]) -> str:
+                p = subprocess.run(["git", "-C", repo_path, *args],
+                                   capture_output=True, text=True, timeout=60)
+                if p.returncode != 0:
+                    raise RuntimeError((p.stderr or p.stdout or "").strip()[-300:])
+                return p.stdout
+
+            try:
+                diff = _git(["diff", "HEAD", "--no-color"])
+            except (OSError, subprocess.SubprocessError, RuntimeError) as e:  # noqa: BLE001
+                return f"worktree 验证执行失败(git 不可用/非 git 仓?): {e}"
+            if not diff.strip():
+                return ("❌ git diff HEAD 为空:工作树没有已跟踪文件的改动。要么你还没改,要么改的是"
+                        "未跟踪新文件(git diff HEAD 不含 untracked),要么 repo_path 指错了树。")
+            warns = []
+            if any(ln.startswith("?? ") for ln in _git(["status", "--porcelain"]).splitlines()):
+                warns.append("检出未跟踪新文件(不在本次验证的 diff 里;新文件本身无 context 可验)")
+            if "diff --git a/.pc/" in diff:
+                warns.append("diff 含 .pc/ 构建产物(debian quilt 垃圾;export_patch 会剔除,这里只提醒)")
+            try:
+                r = _validate(diff, None, reverse_dir=repo_path)  # forward 跳过:树已含改动,reverse 才有效
+            except Exception as e:  # noqa: BLE001
+                return f"worktree 验证执行失败: {e}"
+            revert_ok = r.get("revert_ok")
+            n = len(diff.splitlines())
+            flag = ("✅ 工作树改动自洽(reverse --check 通过:diff 与树状态一致、可干净撤回)"
+                    if revert_ok else "❌ reverse --check 失败:diff 与工作树实际状态对不上(改动没保存?半途手改?)")
+            warn_line = ("\n⚠️ " + ";".join(warns)) if warns else ""
+            log = (r.get("log") or "").strip()[-400:]
+            return f"{flag}\nmode=worktree  diff={n} 行(git diff HEAD,含已暂存){warn_line}\n诊断:\n{log}"
+
         try:
-            r = _validate(patch, forward_dir=repo_path)  # reverse_dir=None:本工具只 forward --check
+            r = _validate(patch, forward_dir=repo_path)  # reverse_dir=None:forward 模式只 forward --check
         except Exception as e:  # noqa: BLE001
             return f"validate_patch 执行失败: {e}"
         applies = bool(r.get("verified"))

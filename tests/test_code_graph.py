@@ -594,6 +594,55 @@ def test_merge_eval_empty_range(tmp_path):
     assert res["commits"] == []
 
 
+def test_merge_eval_no_common_ancestor_short_circuits(tmp_path):
+    """无共同祖先(squashed/独立血统 fork)→ 前置短路,不出逐 commit uncertain 噪音。
+
+    2026-08-26 实测回归(deepin fork 5/5 uncertain 的根因):merge-tree --write-tree 对无关
+    历史直接拒绝(rc=128「拒绝合并无关的历史」),逐 commit applies_cleanly=None → 全 uncertain、
+    零信号。修:rev-parse 后先探 merge-base,没有 → 空 commits + note 指引走语义评估。
+    造法:main 正常两 commit;fork 用 --orphan 独立起步(squash 血统的最小等价)。
+    """
+    import os
+    import shutil
+    import subprocess
+
+    if not shutil.which("git"):
+        pytest.skip("git 不在 PATH")
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "GIT_EDITOR": "true"}
+
+    def g(args):
+        subprocess.run(["git", *args], cwd=str(tmp_path), env=env, check=True,
+                       capture_output=True, text=True)
+
+    g(["init", "-q"])
+    (tmp_path / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    g(["add", "-A"])
+    g(["commit", "-q", "-m", "base"])
+    g(["branch", "-m", "main"])
+    (tmp_path / "a.py").write_text("def alpha():\n    return 2\n", encoding="utf-8")
+    g(["add", "-A"])
+    g(["commit", "-q", "-m", "U1 alpha returns 2"])
+    # fork:孤儿分支(与 main 无共同祖先 = squash 血统最小等价)
+    g(["checkout", "-q", "--orphan", "fork"])
+    g(["rm", "-r", "-q", "--cached", "."])
+    (tmp_path / "a.py").unlink()
+    (tmp_path / "other.py").write_text("def fork_only():\n    return 0\n", encoding="utf-8")
+    g(["add", "-A"])
+    g(["commit", "-q", "-m", "forkinit"])
+
+    from rootrecall.services.code_index.code_graph import merge_eval
+    res = merge_eval("main~1", "main", fork_ref="fork", repo_path=str(tmp_path))
+
+    # 前置短路:不逐 commit 扫,直接给指引
+    assert res["summary"]["total"] == 0, res
+    assert res["commits"] == [], res
+    note = res["note"]
+    assert "无共同祖先" in note, note
+    assert "语义评估" in note, note  # 指路:改走 backport 式逐 commit 语义判断
+    assert "uncertain" not in note   # 不再制造 5/5 uncertain 的假象
+
+
 def test_merge_eval_not_a_repo(tmp_path):
     """非 git 仓目录 → ValueError(工具层据此转友好串)。"""
     from rootrecall.services.code_index.code_graph import merge_eval

@@ -18,7 +18,7 @@ from pathlib import Path
 
 def validate_patch(
     patch: str,
-    forward_dir: Path | str,
+    forward_dir: Path | str | None,
     *,
     reverse_dir: Path | str | None = None,
     timeout: float = 60.0,
@@ -28,11 +28,13 @@ def validate_patch(
     参数:
       patch        观察出的 unified diff(git diff 产物)。
       forward_dir  正向验证目录(原仓 repo_root):补丁应能干净 apply 到这里。
+                   None = 跳过 forward,只做 reverse(worktree 自洽验证用:树已含改动,
+                   forward 对同一棵树必失败,reverse --check 才是有效方向)。
       reverse_dir  反向验证目录(workspace/code,已含改动):补丁应能干净 revert(证必要)。
                    None = 跳过 reverse 检查。
     返回 {verified, forward_method, revert_ok, log}:
-      verified        forward --check 通过(含降级 --3way / patch -p1)。
-      forward_method  strict | 3way | patch | empty(降级路径,反映补丁质量)。
+      verified        forward --check 通过(含降级 --3way / patch -p1);forward_dir=None 时为 None。
+      forward_method  strict | 3way | patch | empty | skipped(降级路径,反映补丁质量)。
       revert_ok       reverse --check 结果(None=没测)。
       log             各步输出尾(诊断)。
     """
@@ -46,7 +48,11 @@ def validate_patch(
         patch += "\n"
 
     log: list[str] = []
-    verified, method = _forward_check(patch, str(forward_dir), timeout, log)
+    if forward_dir is not None:
+        verified, method = _forward_check(patch, str(forward_dir), timeout, log)
+    else:
+        verified, method = None, "skipped"
+        log.append("[forward 跳过:worktree 自洽验证,只做 reverse --check]")
 
     revert_ok: bool | None = None
     if reverse_dir is not None:

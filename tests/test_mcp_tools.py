@@ -67,6 +67,55 @@ def test_validate_patch_garbage(tmp_path):
     assert "applies=False" in out, out
 
 
+def test_validate_patch_worktree_mode(tmp_path):
+    """worktree=True:验当前未提交改动(reverse --check 自洽),不用手搓 bash 反向 apply。
+
+    2026-08-26 实测摩擦的封装:agent 改完树后 forward --check 必失败(context 已变),只能
+    bash 手搓 reverse apply —— 现在工具直接支持。三态:改动自洽 ✅ / 干净树 ❌ / untracked 警示。
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_repo(repo)
+
+    mcp = build_server()
+    # 干净树 → git diff HEAD 为空 → 明确拒绝
+    out = _call(mcp, "validate_patch", {"patch": "", "repo_path": str(repo), "worktree": True})
+    assert "git diff HEAD 为空" in out, out
+
+    # 改一行(未提交)→ diff 与树状态一致 → reverse --check 通过
+    (repo / "f.c").write_text("int main(void){return 1;}\n", encoding="utf-8")
+    out = _call(mcp, "validate_patch", {"patch": "", "repo_path": str(repo), "worktree": True})
+    assert "工作树改动自洽" in out, out
+    assert "mode=worktree" in out, out
+
+    # 再加一个未跟踪新文件 → 仍自洽,但警示 untracked 不在 diff 里
+    (repo / "new.c").write_text("int g(void){return 2;}\n", encoding="utf-8")
+    out = _call(mcp, "validate_patch", {"patch": "", "repo_path": str(repo), "worktree": True})
+    assert "工作树改动自洽" in out, out
+    assert "未跟踪新文件" in out, out
+
+
+def test_validate_patch_worktree_mode_incoherent(tmp_path, monkeypatch):
+    """worktree 模式的失败分支:reverse --check 不过 → ❌ 措辞。
+
+    工具的 diff 由当前树自取,正常姿势下与树恒一致(reverse 总过)—— 失败分支只在
+    「改动没保存/半途手改」的竞态下可达,单测用 monkeypatch 服务层强制 revert_ok=False,
+    直测工具对失败结果的包装措辞。
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_repo(repo)
+    (repo / "f.c").write_text("int main(void){return 1;}\n", encoding="utf-8")
+
+    import rootrecall.services.workspace.validate as val_mod
+    monkeypatch.setattr(val_mod, "validate_patch",
+                        lambda patch, forward_dir, **kw: {"revert_ok": False, "log": "[reverse --check 失败] x"})
+    mcp = build_server()
+    out = _call(mcp, "validate_patch", {"patch": "", "repo_path": str(repo), "worktree": True})
+    assert "reverse --check 失败" in out, out
+    assert "❌" in out, out
+
+
 # ════════════════════════ blast_radius 工具 ═════════════════════════
 
 def test_blast_radius_empty_input():
@@ -91,6 +140,46 @@ def test_blast_radius_not_built(monkeypatch):
     assert "Traceback" not in out, out
     # 友好提示之一:图未建 / 后端未装 / 失败 / 近义容错(没有叫 / 匹配到多个)
     assert any(k in out for k in ("未建", "不可用", "失败", "没有叫", "匹配到多个")), out
+
+
+def _fake_graph_open(monkeypatch, impact_result):
+    """替 CodeGraph.open 返回假图(impact_radius 出指定结果),known_codebases 认得该名。"""
+    import rootrecall.services.code_index.code_graph as cg_mod
+
+    class _FakeGraph:
+        def impact_radius(self, files):  # noqa: ANN001 —— 假对象
+            return impact_result
+
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"fake_cb": {"graph"}})
+
+
+def test_blast_radius_big_blast_hints_call_chain(monkeypatch):
+    """波及面过大(>50 节点)→ 输出提示「文件级无鉴别力,改用 call_chain 定点」。
+
+    2026-08-26 实测(player.c 这类 core 模块):数百节点 + 8000 字符截断,agent 对着截断
+    JSON 硬啃没用,最终还是靠读代码 —— 提示把符号级工具指出来。
+    """
+    big = {"impacted_nodes": [{"qualified_name": f"m.f{i}"} for i in range(60)],
+           "impacted_files": [f"f{i}.c" for i in range(60)], "edges": [], "truncated": False}
+    _fake_graph_open(monkeypatch, big)
+    mcp = build_server()
+    out = _call(mcp, "blast_radius", {"changed_files": ["src/core.c"], "codebase": "fake_cb"})
+    assert "波及面过大" in out, out
+    assert "call_chain" in out, out
+    assert "波及 60 节点" in out, out  # 头部计数
+
+
+def test_blast_radius_small_blast_no_hint(monkeypatch):
+    """小波及面(≤50 节点)→ 不加提示(零噪音),但头部仍给节点/文件计数。"""
+    small = {"impacted_nodes": [{"qualified_name": f"m.f{i}"} for i in range(5)],
+             "impacted_files": ["a.c", "b.c"], "edges": [], "truncated": False}
+    _fake_graph_open(monkeypatch, small)
+    mcp = build_server()
+    out = _call(mcp, "blast_radius", {"changed_files": ["src/leaf.c"], "codebase": "fake_cb"})
+    assert "波及面过大" not in out, out
+    assert "波及 5 节点 / 2 文件" in out, out
 
 
 # ════════════════════════ call_chain 工具 ══════════════════════════

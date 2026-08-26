@@ -51,10 +51,10 @@ allowed-tools:
 | `rootrecall_search_codebase(query)` | 找入口符号——传概念,别传猜的文件名 | 只回真实存在的符号,不会编路径 |
 | `rootrecall_blast_radius(files)` | 改之前——看连带波及谁 | 图驱动;图没建会提示 |
 | `rootrecall_when_introduced(repo_path, symbol=\|file+line)` | 候选难分胜负时——「这段缺陷逻辑哪个 commit 带进来的」 | 纯 git 候选表(时间倒序+added/removed);引入 commit 通常是最老 added>0/removed==0 那条,中间成对的多是重构搬移;哪条真引入语义裁决(git show 逐条读);引入 commit 的 message/diff 常直接暴露根因意图——假设循环的辅助证据,不是硬门 |
-| `rootrecall_validate_patch(patch, repo_path)` | 每版补丁都调 | 只验 **apply,不验修对** |
-| `rootrecall_export_patch(repo_path)` | 用户开口才调——说「生成补丁」「拿去真机验证」时 | 落 `data/bug_rca/<repo>.patch`,供人/真机验证;迭代中间版不自动落盘 |
+| `rootrecall_validate_patch(patch, repo_path)` | 每版补丁都调 | 只验 **apply,不验修对**;改完工作树后验自洽传 `worktree=True`(封装 reverse --check,免手搓 bash 反向 apply) |
+| `rootrecall_export_patch(repo_path)` | 用户开口才调——说「生成补丁」「拿去真机验证」时 | 落 `data/bug_rca/<repo>.patch`,供人/真机验证;迭代中间版不自动落盘;**落点默认在 RootRecall 数据目录,不在用户会话目录——调完把返回的绝对路径原样报给用户,用户要指定目录就传 out_dir** |
 | `rootrecall_memory_memorize(...)` | apply 过即可记(带 `verification="apply_only"`);真机验证后重提 `verification="real_machine"` 升级 | kind=bug_lesson;`codebase` 传项目名(不带版本号,教训跨版本共享) |
-| `rootrecall_export_report(content, repo_path, topic=<bug 短标识>)` | 验证通过、用户说「生成报告」才调 | 最终报告落 `data/bug_rca/<repo>-<topic>-rca.md`(同仓多 bug 不传 topic 会互相覆盖) |
+| `rootrecall_export_report(content, repo_path, topic=<bug 短标识>)` | 验证通过、用户说「生成报告」才调 | 最终报告落 `data/bug_rca/<repo>-<topic>-rca.md`(同仓多 bug 不传 topic 会互相覆盖);同 export_patch:落完把绝对路径报给用户 |
 
 ## 硬约束
 
@@ -64,7 +64,7 @@ allowed-tools:
 - **切窗是线索不是答案**:根因形态多样 —— 可能在窗口上游更早、很久以前的持久化状态/配置、别的日志源、或源码逻辑,不一定在本窗口、不一定是某条日志行。窗口只见现象(abort/ERROR)没看到因时:**逐步扩大窗口 / 换日志源 / 查源码与配置**,别锚定窗口里最响的行。
 - **日志是线索,代码是确定答案**:日志切到的现象只是线索;真根因(状态机/分支逻辑/持久化状态)用 `search_codebase` 在源码里确定。代码情报比日志推断可靠 —— 重心放代码。
 - **标准值断言必须带规范原文出处**:报告里凡写「官方标准/SIG Assigned Numbers/RFC 规定是 X」「与标准不符」,必须先抓到规范原文(web 搜官方文档),给 source_url 并引关键句 —— file:line 只证明「代码里确实这么写」,证明不了「标准要求什么」。抓不到原文就降级写「实测代码值 X(标准值未核)」;凭训练记忆报标准号/UUID 是幻觉高发区(实测教训 2026-08-25:bluez RCA 把 BASS 官方 UUID 0x184F 报成 0x185F,还连带误判成 fork 偏差)。
-- **归因断言先对照上游**:凡写「这是 fork 改的 / 上游本来就这样」,必须先打开 upstream 基线核对同位置代码(有基线就 `search_codebase`/`read` 对照);两边都查过、差异只在本侧存在,才叫「fork 独有」。只看一侧就归因 = 把上游现状记成 fork 的债。
+- **归因断言先对照 fork 的同步点,不是上游 HEAD**:凡写「这是 fork 改的 / 上游本来就这样 / 上游没有这段代码」,必须对照 **fork 最近一次同步上游时**的代码版本——上游当前 HEAD 已经含了后来的修复,拿 HEAD 对照会错判「上游没有」→ 把上游老债记成 fork 特有(实测 2026-08-26:`folder->msg` 重构被错判 fork 特有,实为上游 2016 年引入、fork 停在旧同步点,错误结论一度入库靠 corrects 才纠正)。找同步点:有共同祖先 → `git merge-base`;squash 血统 → fork 提交信息里的同步记录 / 逐个 `git show` 老 commit 找引入点(`when_introduced` 在上游仓跑)。
 
 ## 证伪纪律(避免误诊)
 
@@ -82,6 +82,7 @@ allowed-tools:
 - 把 `validate_patch` 通过当"修对"——只查 apply。
 - 未验证就 `memorize`。
 - 用户没要就擅自 `export_patch` / `export_report` —— 落盘是用户触发的交付,不是迭代步骤。
+- `export_patch` / `export_report` 落盘后不报绝对路径 —— 默认落点在 RootRecall 数据目录(不在用户会话目录),用户找不到文件 = 没交付;用户给了目录就传 `out_dir`。
 - 抓最响的日志行当根因,不查它之前的现象。
 - 只立一个候选就闷头修——先列 2-3 个候选淘汰。
 - 候选定稿前跳过 `memory_recall` 定向复核。

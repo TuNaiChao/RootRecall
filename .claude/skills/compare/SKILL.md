@@ -50,7 +50,7 @@ allowed-tools:
 | `read` / `grep` / `glob` | step 4 读两版函数体(仅重跑路径) | **核心**:step 4 配对判同职责 + 逐节点对照全靠 read 两版函数体。**短路路径不用** |
 | `rootrecall_memory_recall(query, codebase?)` | **step 1 第一步**(codebase=项目名,查一次) | 命中同主题对比事实 → **短路直接出报告**(step 5/6),不重跑;这才是「秒答」。没命中才走完整调研 |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=codebase_fact,kind_detail=architecture,带双源 evidence;`codebase` 传项目名(如 `bluez`,不带版本);**不需用户验证**。**短路路径不 memorize**(DB 已有) |
-| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘 | 写对比报告 .md;topic 必传防同仓多主题覆盖 |
+| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘 | 写对比报告 .md;topic 必传防同仓多主题覆盖;**落点默认在 RootRecall 数据目录(不在用户会话目录)——落完把返回的绝对路径原样报给用户,用户要指定目录传 out_dir** |
 | `rootrecall_ensure_repo(name)` | 本地没仓 | 只读 clone |
 
 ## 硬约束
@@ -60,7 +60,7 @@ allowed-tools:
 - **两版函数配对是语义判断** —— 没有确定性工具能自动配对;各 codebase 结构图独立无跨版本联合图,`cross_version_diff` 也只支持同仓两 ref(两个独立仓无效)。必须 `read` 函数体判同职责。
 - **不用 cross_version_diff** —— 它是「同一个 git 仓的两个 ref」对比,v20/v25 这种两独立仓无效;两版差异靠各 codebase 检索 + read 对照。
 - **结论必须附双源 file:line** —— 每条差异结论都要标 v25 的 + v20 的 file:line,防幻觉,对齐 cited-reporter。双源 file:line 锚「两版各自怎么写」;凡断言「与官方标准/SIG/RFC 不符」,必须另附规范原文 source_url(抓不到就写「标准值未核」,不凭训练记忆报标准值 —— 幻觉高发区)。
-- **「哪边改的」要三源归因** —— v20/v25 差异要说「fork 改的还是上游演进的」,有 upstream 基线必须对照第三源(upstream 同位置)再归因;没对照过就只报差异本身 + 双源 file:line,别猜方向。
+- **「哪边改的」要三源归因,且对照的是 fork 的同步点** —— v20/v25 差异要说「fork 改的还是上游演进的」,有 upstream 基线必须对照第三源(upstream 同位置)再归因;没对照过就只报差异本身 + 双源 file:line,别猜方向。**对照的 upstream 必须是 fork 的上游同步点版本,不是上游当前 HEAD** —— HEAD 已含后来的修复,拿它对照会错判「上游没有」→ 把上游老债记成 fork 特有(实测 2026-08-26:`folder->msg` 重构被错判 fork 特有,实为上游 2016 年引入)。找同步点:有共同祖先 → `git merge-base`;squash 血统 → 同步记录 / 上游仓 `when_introduced` 查引入 commit。
 - **对比事实读码即记** —— 不像 bug/补丁要等真机验证;对比结论读码坐实,step 7 可直接 memorize(仅重跑路径),下次秒答。
 - **recall 命中就短路,不重跑** —— step 1 recall 命中同主题对比事实时,直接复用出报告,**不要为了「走完流程」又 search/read 一遍**。这是本 skill 的核心价值(下次秒答);重跑只在没命中/主题对不上时才做。短路路径不 memorize(DB 已有,重复记白花一步)。
 

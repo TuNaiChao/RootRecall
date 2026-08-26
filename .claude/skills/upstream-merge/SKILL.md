@@ -30,7 +30,7 @@ allowed-tools:
 2. **拉上游到本地**(用户定方向:本地分析):`bash` 跑 `git -C <repo> remote add upstream <url>`(幂等:已存在则跳过)→ `git -C <repo> fetch upstream --no-tags`。或上游单独 clone 到临时目录再对比。
 3. **确认 fork_ref 在本地可解析**:`git -C <repo> rev-parse --verify <fork_ref>` 通即可。冲突检查是零 touch 的(`merge-tree --write-tree`,git ≥ 2.38,在对象库里试合并)——**不需要** checkout fork_ref、worktree 脏也不影响三态(仅老 git 回退 `apply --check` 时才要切干净态,note 会提示)。
 4. **定上游范围**:确认 `upstream_base_ref..upstream_head_ref`(如「上次同步点」..`upstream/master` 最新)。范围太大 → 用 `concern_files` 收窄到 fork 关心的模块。
-5. **跑三态表【硬门】** `merge_eval(upstream_base_ref, upstream_head_ref, fork_ref, repo_path, concern_files?, codebase?)` —— 拿到逐 commit 的 `already_fixed`/`recommend_merge`/`conflict`/`uncertain`。这是确定性地板(patch-id 等价 + apply 检查),**不**判断相关性。
+5. **跑三态表【硬门】** `merge_eval(upstream_base_ref, upstream_head_ref, fork_ref, repo_path, concern_files?, codebase?)` —— 拿到逐 commit 的 `already_fixed`/`recommend_merge`/`conflict`/`uncertain`。这是确定性地板(patch-id 等价 + apply 检查),**不**判断相关性。**若返回 note 说「fork 与上游无共同祖先」**(squash/独立血统的 fork,实测 deepin bluez):三态地板**整体不可用**,别重试也别对着 uncertain 硬啃 —— 直接转逐 commit 语义评估:`git show` 读每个 commit 的 diff + 对照 fork 对应代码判断「fork 有没有这 bug / 要不要这修」(backport 工作流的标准打法)。
 6. **查相关性(对 recommend_merge 逐个)**:能合 ≠ fork 需要它。对每个 `recommend_merge` 的 commit:`call_chain`/`blast_radius`(触及的函数/文件)/`search_codebase` 看 fork 真有这个 bug 吗、改动触及的代码 fork 在用吗。不相关 → 标 `not_relevant`(从建议合里剔除)。
 7. **出决策表**:逐 commit 决策 + 聚合计数(见输出格式)。**到这一步止**:给评估结论;**先别 memorize**。
 8. **用户验证通过后才 memorize** —— 用户反馈某个 commit 已 backport 并编译/真机验证通过后,再 `memorize(kind=bug_lesson, summary=<决策+原因>, commit_sha=<上游 sha>, tags=["upstream_merge","backport"])`。未验证就 memorize = 把没坐实的判断当教训,污染后续同类检索。
@@ -54,6 +54,7 @@ allowed-tools:
 - **只评估不修改** —— `bash` 只跑读类 git(`fetch` 拉上游除外);不 `apply`/`cherry-pick`/`merge`/`reset`/写文件。改 fork 是用户的活。
 - **merge_eval 过(能 apply)≠ fork 需要它** —— 三态的 `recommend_merge` 只表示「fork 没等价、能干净打上」;**必须再查相关性**(步骤 6)才决定是否真建议合,否则把无关改动塞进 fork。
 - **冲突检查零 touch(2026-08-17 起)** —— merge_eval 用 `merge-tree --write-tree` 在对象库判冲突,不依赖 checkout/worktree 状态;仅 git < 2.38 回退 `apply --check` 对当前 worktree(note 会提示,那时才需要切干净态)。
+- **无共同祖先 = 三态地板不可用(2026-08-26 起)** —— squash/独立血统的 fork(无 merge-base)会被 merge_eval 前置短路并给指引:此时逐 commit 全是 uncertain 不是工具坏了,是 patch-id 与 merge-tree 都失去参照;直接走语义评估(git show + 对照 fork 代码),判定标准同 backport(「fork 有没有同一 bug」),别把「能 apply」当「该合」的依据。
 - **编译 / 正确性不自动验证** —— 工具只到 apply;能否编译、修对,用户自验。
 - **未经验证不 memorize** —— 评估是确定性比对 + 读码推理,不算坐实;memorize 推迟到用户验证通过后(可跨 session)。
 
