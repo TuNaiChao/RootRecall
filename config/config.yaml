@@ -92,7 +92,9 @@ sandbox:
 # 代码理解服务(P1 分阶段搭建,见 docs/p1-code-understanding-design.md)。
 # P1.2 先配 embedding;vector_store / retrieval / repo_map 随对应阶段补。
 code_index:
-  repo: rootrecall                       # P1.4: search_code 查的表名(须与 build_index 一致;缺省回退 workspace 目录名)
+  # repo: 不再钉默认(2026-08-26):P1.4 时代钉的 rootrecall 是安装根名 = 永远空的作用域
+  # (实测 T14:recall 默认探空池盲试)。现在默认链 = env ROOTRECALL_CODEBASE > 这里(不设)
+  # > 唯一注册基线(单库机器零配置)> cwd 目录名;多库机器靠近义容错列候选。
   embedding:
     # provider 抽象(像模型工厂):
     #   openai_compatible = 远端 OpenAI 兼容 API(默认;免下载、免 torch,和调 chat 一样配 key)

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 给 bug/工作仓接上 RootRecall 的三根线,接完就能在那个仓里直接启动 opencode(不用回本仓根):
+# 项目级精确定锚(可选;2026-08-26 起全局注册已是默认姿势,本脚本退居「要按目录钉死
+# 检索库 / 不想全局注入 / 无权写 ~/.config」的场景 —— 三根线原理不变,给 bug/工作仓接线):
 #   门1(skill 发现): <bug仓>/.claude/skills 软链到本仓 .claude/skills
 #                     (opencode 从启动目录沿 git worktree 爬,项目级 .claude/skills 会被拾取)
 #   门2(路由指令): <bug仓>/AGENTS.md 软链到本仓 AGENTS.md

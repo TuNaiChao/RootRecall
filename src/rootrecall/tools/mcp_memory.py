@@ -38,10 +38,13 @@ from rootrecall.services.memory.schema import Scope
 
 
 def _resolve_codebase(explicit: str | None) -> str:
-    """定查哪个代码库:--codebase > ROOTRECALL_CODEBASE env > config.code_index.repo > cwd 目录名。
+    """定查哪个代码库:--codebase > ROOTRECALL_CODEBASE env > config.code_index.repo > 唯一注册库 > cwd 目录名。
 
     ROOTRECALL_CODEBASE 由 delegate(opencode 父进程)注入、opencode 透传给 MCP 子进程
     (local server 的 environment 字段不展开 {env:},靠进程 env 继承 —— 2026-08-03 源码核实)。
+    「唯一注册库」档(2026-08-26 全局化配套):全局安装后服务器 cwd 恒为安装根,cwd 目录名
+    永远无意义;单库机器(systemd-only)恰好只有一个注册基线时直接当默认,零配置零传参。
+    多库机器不定默认 —— 交给近义容错(传项目名列候选)+ find_repo 自动开仓。
     """
     import os
     if explicit:
@@ -53,6 +56,14 @@ def _resolve_codebase(explicit: str | None) -> str:
     repo = getattr(cfg.code_index, "repo", None)
     if repo:
         return repo
+    try:
+        from rootrecall.services.repos.registry import known_codebases
+
+        known = known_codebases()
+        if len(known) == 1:
+            return next(iter(known))
+    except Exception:  # noqa: BLE001 —— 注册表坏不影响默认链,继续走 cwd 兜底
+        pass
     return Path.cwd().name
 
 

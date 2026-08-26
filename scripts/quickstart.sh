@@ -116,18 +116,16 @@ echo "    uv run rootrecall baseline add $cb_root/v20/bluez     # → 基线 blu
 echo "    uv run rootrecall baseline add $cb_root/v25/bluez     # → 基线 bluez-v25"
 echo "    uv run rootrecall baseline add $cb_root/systemd       # → 基线 systemd"
 
-# ── [6/7] (可选)给 bug/工作仓接线:接完能在那个仓里直接启动 opencode ──────
-echo "[6/7] opencode 接线(推荐全局一次,免每目录接线)"
-printf '要把 RootRecall 全局注册进 opencode 吗(装一次,之后任意目录 opencode 直接用)?[Y/n] '
-read -r ans_global || ans_global=""
-if [ "$ans_global" != "n" ]; then
-  if command -v opencode >/dev/null 2>&1; then
-    uv run rootrecall install --global
-  else
-    echo "  ⚠️ 未检测到 opencode,跳过(装好 opencode 后随时: uv run rootrecall install --global)"
-  fi
+# ── [6/7] opencode 全局注册(默认装不问)+ 可选项目级精确定锚 ──────────────
+echo "[6/7] opencode 全局注册(四件套:skills/MCP/agent 块/路由表;装一次任意目录直接用)"
+# 2026-08-26 用户定:默认装不问 —— 路由表带适用范围守卫行,无关会话自动忽略;
+# 介意随时 `uv run rootrecall uninstall --global` 整套摘除。
+if command -v opencode >/dev/null 2>&1; then
+  uv run rootrecall install --global
+else
+  echo "  ⚠️ 未检测到 opencode,跳过(装好 opencode 后随时: uv run rootrecall install --global)"
 fi
-printf '还要给某个 bug/工作仓做项目级接线吗?输入目录绝对路径,多个用空格分隔(留空跳过):'
+printf '(可选)给某个 bug/工作仓做项目级精确定锚(钉默认检索库)?输入目录绝对路径,多个用空格分隔(留空跳过):'
 read -r bug_dirs || bug_dirs=""
 if [ -n "$bug_dirs" ]; then
   # shellcheck disable=SC2086  # 用户按空格分隔输入多个路径

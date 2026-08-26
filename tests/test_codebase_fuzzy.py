@@ -143,6 +143,32 @@ def test_graph_missing_msg_distinguishes():
     assert "baseline add" in _graph_missing_msg("x", {})
 
 
+# ════════════════════════ ⑤ _resolve_codebase 智能默认(2026-08-26 全局化配套)════════════════════════
+
+def test_resolve_codebase_smart_single_baseline(monkeypatch):
+    """默认链新增「唯一注册基线」档:单库机器零配置零传参。
+
+    背景:全局安装后 MCP 服务器 cwd 恒为安装根,cwd 目录名永远无意义(T14 的空池元凶
+    config.repo=rootrecall 已撤);恰好只有一个注册库时直接当默认,多库不定(交给近义容错)。
+    """
+    from rootrecall.tools.mcp_memory import _resolve_codebase
+
+    monkeypatch.delenv("ROOTRECALL_CODEBASE", raising=False)
+    # 唯一注册库 → 它就是默认(单库 systemd 机器零传参)
+    _known(monkeypatch, {"systemd": {"registry"}})
+    assert _resolve_codebase(None) == "systemd"
+    # 多库 → 不猜,回落 cwd 名(近义容错会在工具层列候选)
+    _known(monkeypatch, {"bluez-v20": {"registry"}, "bluez-v25": {"registry"}})
+    import pathlib
+    assert _resolve_codebase(None) == pathlib.Path.cwd().name
+    # 显式传参永远最高
+    assert _resolve_codebase("bluez-v25") == "bluez-v25"
+    # 注册表坏 → 默认链不断,回落 cwd
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert _resolve_codebase(None) == pathlib.Path.cwd().name
+
+
 # ════════════════════════ ④ 工具层接线(build_server 直调)════════════════════════
 
 def test_repo_map_autocorrected_name_visible(monkeypatch):
