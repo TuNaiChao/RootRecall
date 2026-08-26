@@ -811,6 +811,66 @@ def test_memory_recall_miss_lists_scopes(monkeypatch):
     assert "已并查 general" in out, out
 
 
+def test_memory_dump_empty_lists_scopes(monkeypatch):
+    """T26:dump 空作用域 → 列非空作用域(对齐 recall miss;治「记忆分布无发现入口」)。
+
+    2026-08-26 实测:默认 scope 落在 server 自身名(其 cwd 名)上,空返回无指引,agent
+    多花 1 dump + 1 bash 才找到记忆所在。后端不支持 list_scopes(None)→ 静默不加提示。
+    """
+    fake = _FakeMemSvc()
+    fake.list_scopes_return = [("bluez", 9), ("general", 3)]
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_dump", {"codebase": "RootRecall"})
+    assert "No memory for codebase=RootRecall" in out, out
+    assert "非空记忆作用域:bluez, general" in out, out
+
+
+def test_memory_recall_low_sim_lists_scopes(monkeypatch):
+    """T26:recall 低相关劝退(sim<0.4)时同样附非空作用域 —— 真 miss 分支的提示因「general
+    恒并查」永不触发,这里成了体检/多仓场景唯一能暴露记忆分布的出口。"""
+    from rootrecall.services.memory.schema import RecallHit
+
+    def hit(summary: str, score: float, sim: float | None) -> RecallHit:
+        return RecallHit(summary=summary, score=score, kind="domain_knowledge",
+                         repo="general", item_id=summary[:8], confidence=0.9, sim=sim)
+
+    fake = _FakeMemSvc()
+    fake.search_returns = {"general": [hit("无关条目", 0.03, 0.21)]}
+    fake.list_scopes_return = [("bluez", 9), ("general", 3)]
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_recall", {"query": "cgroup 内存回收", "top_k": 3})
+    assert "sim=0.21" in out and "按 miss 处理" in out, out
+    assert "非空作用域:bluez(9)、general(3)" in out, out
+
+
+def test_memory_dump_card_hits0_and_url(monkeypatch):
+    """T26:体检卡 hits 恒显(0 也显 —— 0 值不渲染时分不清「字段缺失」和「从未被召回」,
+    信号②「高 hits 待巩固」盲判)+ domain_knowledge 的 source_url 上卡(截 60)。"""
+    from rootrecall.services.memory.schema import Evidence, KnowledgeItem, Scope, SourceTier
+
+    scope = Scope(owner="default", codebase="general")
+    item_nohits = KnowledgeItem(
+        kind="domain_knowledge", repo="general", scope=scope,
+        summary="EATT 是 Core 5.2 的 ATT 增强", confidence=0.9,
+        source_tier=SourceTier.imported,
+        evidence=[Evidence(file="src/gatt-client.c", line=2326)],
+        source_url="https://www.bluetooth.com/bluetooth-resources/bluetooth-core-5-2-feature-overview/"
+                   "very/long/path/that/should/be/truncated/for/sure/0123456789",
+    )
+    fake = _FakeMemSvc()
+    fake.list_items_return = [item_nohits]
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_dump", {"codebase": "general"})
+    assert "hits=0" in out, out                     # 0 恒显(消「字段缺失」歧义)
+    assert "url=https://www.bluetooth.com" in out, out  # source_url 上卡
+    assert len([ln for ln in out.splitlines() if "url=" in ln and ln.strip().startswith("-")]) == 1
+    url_part = [ln for ln in out.splitlines() if "url=" in ln][0].split("url=")[1].split()[0]
+    assert len(url_part) <= 60, url_part            # 长 URL 截 60
+
+
 def test_memory_memorize_per_call_codebase(monkeypatch):
     """memory_memorize 传 codebase → 写入用对应 scope(返回串回显 + scope 记录双证,不碰真 db)。"""
     fake = _FakeMemSvc()

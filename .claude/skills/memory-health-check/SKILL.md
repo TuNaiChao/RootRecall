@@ -2,6 +2,7 @@
 name: memory-health-check
 description: 给一个 codebase 的长期记忆做"体检"——一次性把所有记忆条目摊开,逐条看它多可信(confidence)、来自哪(source_tier/commit_sha/evidence)、还有没有效(bi-temporal),聚出健康信号(溯源弱/待巩固/已过期/未决矛盾)和建议。用户问"我们对这个仓到底记了啥"、"记忆库质量怎么样"、"哪些记忆可信"、"帮我审一下记忆库"、"这些教训还有效吗"时用。
 allowed-tools:
+  - rootrecall_find_repo
   - rootrecall_memory_dump
   - rootrecall_memory_recall
   - rootrecall_memory_memorize
@@ -25,7 +26,7 @@ allowed-tools:
 
 > **先 dump,逐条读,聚信号**。和调研型 skill(onboarding/compare)的「先 recall」不同——体检的第一步是**把全量摊开**(`memory_dump`),不是按 query 挑几条。因为你审的是「整个库长啥样」,不是「某主题命中啥」。
 
-1. **确认 codebase + 体检范围**:问清 codebase 名(如 `bluez`)+ 范围——整体审 / 只审某 kind(codebase_fact / bug_lesson / mental_model)/ 要不要连失效条目一起审(`include_invalid=True`)。然后 `memory_dump(kind=<可选>, include_invalid=<可选>, codebase=<codebase>)` 一次拉全量摊开。**注意翻页**:`memory_dump` 默认每页 60 条,header 若提示 `[showing 1-60 of N, more → memory_dump(offset=60)]` 说明没拿全——**体检要审全量,务必 bump offset 翻页直到拿完**(漏看一半会误判健康度,尤其可能漏掉未决矛盾的另一半)。
+1. **确认 codebase + 体检范围**:问清 codebase 名(如 `bluez`)+ 范围——整体审 / 只审某 kind(codebase_fact / bug_lesson / mental_model)/ 要不要连失效条目一起审(`include_invalid=True`)。然后 `memory_dump(kind=<可选>, include_invalid=<可选>, codebase=<codebase>)` 一次拉全量摊开。**注意翻页**:`memory_dump` 默认每页 60 条,header 若提示 `[showing 1-60 of N, more → memory_dump(offset=60)]` 说明没拿全——**体检要审全量,务必 bump offset 翻页直到拿完**(漏看一半会误判健康度,尤其可能漏掉未决矛盾的另一半)。**作用域发现走 dump/find_repo,别拿 recall 硬探**(2026-08-26 实测:recall 是主题检索,拿它探「哪些库有记忆」既浪费调用、非主题查询词还会被 sim<0.4 护栏正确拦下)——不知道记忆记在哪个项目名下时:dump 空结果会列出全部非空作用域,照着重调即可;或 `rootrecall_find_repo(project)` 看注册了哪些项目。**别漏 general 池**:domain_knowledge 全在共享池,`memory_dump(codebase="general")` 单独拉一次,否则漏审一整类知识。
 2. **逐条读溯源卡**:对 dump 返回的每张卡,看四个维度——`conf`(置信度)/ `tier`(来源档:delegate/stated 最可信,tool 最低)/ `@file:line` 或 `@无证据`(溯源锚点)/ `sha`(commit 溯源)/ `STALE`(是否失效或被取代)/ `hits`(被召回次数)/ `[标签]`(治理标签:needs_review=未决矛盾候选,merged_upstream=补丁已在上游且 conf 已打折,stale=长期没人翻)。把可疑的(高 conf 无溯源 / 低 conf 高 hits / STALE / 互相打架 / 带治理标签)挑出来。
 3. **聚健康信号**(你的核心推理活):把挑出的可疑条目归成四类——
    - **溯源弱**:高 conf(如 ≥0.7)但 `@无证据` 且无 `sha`。→ 建议:补 evidence/commit_sha 再信。

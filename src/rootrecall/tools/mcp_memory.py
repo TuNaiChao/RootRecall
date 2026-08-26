@@ -276,16 +276,21 @@ def _render_audit_card(it) -> str:
     # 被纠正(不是失效/取代,但结论已被另一条推翻)→ 标 CORRECTED,体检时看出「这条别再用,看纠正者」
     if not stale and getattr(it, "corrected_by", None):
         stale = f"  CORRECTED(by {it.corrected_by[:8]})"
-    # 记录时间 + 被召回次数:created_at 看新旧,access_count 看利用率(低置信却高 access = 待巩固)
+    # 记录时间 + 被召回次数:created_at 看新旧,access_count 看利用率(低置信却高 access = 待巩固)。
+    # hits 恒显(含 0,T26,2026-08-26 实测:0 值不渲染时体检分不清「字段缺失」和「从未被召回」,
+    # 信号②「高 hits 待巩固」直接盲判)。
     dt = f"  {it.created_at:%Y-%m-%d}" if it.created_at else ""
-    acc = f"  hits={it.access_count}" if it.access_count else ""
+    acc = f"  hits={it.access_count or 0}"
+    # Web 溯源(T26):domain_knowledge 的 source_url 是它唯一的外部锚点,不渲染 = 体检没法核
+    # 「这条网调结论出处是啥」;长 URL 截 60 字符(Enough to identify, not enough to spam)。
+    url = f"  url={it.source_url[:60]}" if getattr(it, "source_url", None) else ""
     # 条目 id(截断 8 位):体检/纠正链要用它 —— memory_memorize(corrects=[...]) 要传「在 dump 输出里看到的 id」,
     # 不渲染 id = 闭环走不通(agent 拿不到被纠正条目 id,被逼去 grep SQLite)。与 sha/CORRECTED 同款对称。
     kid = f"  id={it.id[:8]}" if it.id else ""
     # 治理标签(Phase 3 A2:consolidate 五 pass 的产出):needs_review=未决矛盾 / merged_upstream=补丁已在上游
     # (conf 已打折)/ stale=长期没人翻。体检时一眼看出「这条卡在哪个治理状态」,不用逐条猜。
     tg = f"  [{','.join(it.tags)}]" if getattr(it, "tags", None) else ""
-    return f"- [{it.kind}] {it.summary}{loc}  {conf} {tier}{sha}{dt}{acc}{kid}{tg}{stale}".rstrip()
+    return f"- [{it.kind}] {it.summary}{loc}  {conf} {tier}{sha}{dt}{acc}{kid}{url}{tg}{stale}".rstrip()
 
 
 def _honest_truncate(body: str, limit: int, *, how_to_refetch: str) -> str:
@@ -459,6 +464,14 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         if top_sim is not None and top_sim < _RECALL_SIM_WARN:
             warn = (f"⚠️ 最高命中的语义相关度 sim={top_sim:.2f} < {_RECALL_SIM_WARN} —— 大概率主题不符,"
                     f"按 miss 处理(走冷路径完整调研),别拿这些条目短路。\n")
+            # 劝退时附作用域分布(T26):真 miss 分支的提示因「general 恒并查」永不触发,这里成了
+            # 唯一能暴露记忆分布的出口 —— 体检/多仓场景想知道「记忆都记在哪」,看这行就够。
+            try:
+                avail = await svc.list_scopes()
+            except Exception:  # noqa: BLE001 —— 提示是增强,失败不挡主链路
+                avail = None
+            if avail:
+                warn += "非空作用域:" + "、".join(f"{cb}({n})" for cb, n in avail[:8]) + "。\n"
         out = [f"{warn}Recalled {len(shown)} (by relevance, codebase={active_repo}{tag},并查 general 池):"]
         for h in shown:
             line = h.render()
@@ -647,7 +660,16 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         if not items:
             tag = f", kind={kind}" if kind else ""
             inv = ", include_invalid" if include_invalid else ""
-            return f"No memory for codebase={active_repo}{tag}{inv}."
+            # 空作用域提示(T26,2026-08-26 实测:默认 scope 落在 server 自身名上,空返回无指引,
+            # agent 多花 1 dump + 1 bash 才找到记忆所在)—— 对齐 recall miss 分支:列非空作用域,
+            # 一次改对。后端不支持 list_scopes → 静默跳过。
+            hint = ""
+            try:
+                if (avail := await svc.list_scopes()):
+                    hint = f" 非空记忆作用域:{', '.join(s for s, _ in avail)}(codebase 传项目名重调)"
+            except Exception:  # noqa: BLE001 —— 提示失败不影响空结果语义
+                pass
+            return f"No memory for codebase={active_repo}{tag}{inv}.{hint}"
         total = len(items)
         # 分页:体检要全量,但单次返回过大撑爆上下文。默认 60 条/页,agent 按需翻页(offset += limit)。
         page = items[offset:offset + limit]
