@@ -53,7 +53,7 @@ allowed-tools:
 | `rootrecall_validate_patch(patch, repo_path)` | 每版补丁都调 | 只验 **apply,不验修对** |
 | `rootrecall_export_patch(repo_path)` | 用户开口才调——说「生成补丁」「拿去真机验证」时 | 落 `data/bug_rca/<repo>.patch`,供人/真机验证;迭代中间版不自动落盘 |
 | `rootrecall_memory_memorize(...)` | apply 过即可记(带 `verification="apply_only"`);真机验证后重提 `verification="real_machine"` 升级 | kind=bug_lesson;`codebase` 传项目名(不带版本号,教训跨版本共享) |
-| `rootrecall_export_report(content, repo_path)` | 验证通过、用户说「生成报告」才调 | 最终报告落 `data/bug_rca/<repo>-rca.md` |
+| `rootrecall_export_report(content, repo_path, topic=<bug 短标识>)` | 验证通过、用户说「生成报告」才调 | 最终报告落 `data/bug_rca/<repo>-<topic>-rca.md`(同仓多 bug 不传 topic 会互相覆盖) |
 
 ## 硬约束
 
@@ -62,6 +62,8 @@ allowed-tools:
 - **大日志用 grep/awk 自己切**(无专门切片工具 —— 切片 opencode 的 read/grep/awk 就够,deer-flow/omp 均无专门工具,重造即踩坑#2):按故障时间窗(HH:MM:SS)+ **日志词汇**关键词(scan/result/p2p/timeout,**别用代码符号** 如 scan_res_handler —— 日志是散文形,子串不匹配)筛,封顶行数;别一次 read 全量(1.6 万行撑爆上下文)。read 给行范围、grep 给上下文,够用。
 - **切窗是线索不是答案**:根因形态多样 —— 可能在窗口上游更早、很久以前的持久化状态/配置、别的日志源、或源码逻辑,不一定在本窗口、不一定是某条日志行。窗口只见现象(abort/ERROR)没看到因时:**逐步扩大窗口 / 换日志源 / 查源码与配置**,别锚定窗口里最响的行。
 - **日志是线索,代码是确定答案**:日志切到的现象只是线索;真根因(状态机/分支逻辑/持久化状态)用 `search_codebase` 在源码里确定。代码情报比日志推断可靠 —— 重心放代码。
+- **标准值断言必须带规范原文出处**:报告里凡写「官方标准/SIG Assigned Numbers/RFC 规定是 X」「与标准不符」,必须先抓到规范原文(web 搜官方文档),给 source_url 并引关键句 —— file:line 只证明「代码里确实这么写」,证明不了「标准要求什么」。抓不到原文就降级写「实测代码值 X(标准值未核)」;凭训练记忆报标准号/UUID 是幻觉高发区(实测教训 2026-08-25:bluez RCA 把 BASS 官方 UUID 0x184F 报成 0x185F,还连带误判成 fork 偏差)。
+- **归因断言先对照上游**:凡写「这是 fork 改的 / 上游本来就这样」,必须先打开 upstream 基线核对同位置代码(有基线就 `search_codebase`/`read` 对照);两边都查过、差异只在本侧存在,才叫「fork 独有」。只看一侧就归因 = 把上游现状记成 fork 的债。
 
 ## 证伪纪律(避免误诊)
 

@@ -36,6 +36,18 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+
+def default_graph_root() -> str:
+    """默认 base_dir 的规范解析:与 CLI 建图落点同锚(ROOTRECALL_HOME 设置时迁家)。
+
+    "data/structgraph" 字面量是 cwd 相对;ROOTRECALL_HOME 设置时 CLI 建图走 reanchor 迁家,
+    而本类 build/update/open 的默认值若仍是 cwd 相对,同机两处找图会分裂(2026-08-25 工具层
+    接线时发现)。单点在这里解析:env 未设时返回原串,行为与旧默认完全一致。
+    """
+    from rootrecall.services.repos.registry import reanchor_data_path
+
+    return str(reanchor_data_path("data/structgraph"))
+
 logger = logging.getLogger(__name__)
 
 
@@ -684,7 +696,7 @@ class CodeGraph:
         repo_root: str | Path,
         repo_name: str,
         *,
-        base_dir: str = "data/structgraph",
+        base_dir: str | None = None,
         min_community_size: int = 2,
     ) -> CodeGraph:
         """建图(一次性,慢):解析全仓 → 存节点/边 → Leiden 社区检测 → 持久化。
@@ -693,6 +705,7 @@ class CodeGraph:
         建完顺手把当前 git HEAD 记进同目录 ``built_head`` 快照 —— update() 靠它算
         「上次建图以来改了哪些文件」(非 git 仓没快照,update() 每次都退回全量)。
         """
+        base_dir = base_dir or default_graph_root()
         _require_crg()
         from code_review_graph.communities import detect_communities, store_communities
         from code_review_graph.graph import GraphStore
@@ -723,7 +736,7 @@ class CodeGraph:
         repo_root: str | Path,
         repo_name: str,
         *,
-        base_dir: str = "data/structgraph",
+        base_dir: str | None = None,
         min_community_size: int = 2,
     ) -> tuple[CodeGraph, dict]:
         """增量刷新已有结构图:只重解析「上次建图/更新以来动过 + 未跟踪新增」的文件。
@@ -741,6 +754,7 @@ class CodeGraph:
         返回 (CodeGraph, 摘要 dict):摘要 mode ∈ incremental | noop | full_rebuild;
         incremental 再带 files_updated / changed_files / dependent_files / communities。
         """
+        base_dir = base_dir or default_graph_root()
         db_path = Path(base_dir) / repo_name / "graph.db"
         marker = Path(base_dir) / repo_name / "built_head"
         repo = Path(repo_root)
@@ -781,8 +795,9 @@ class CodeGraph:
         }
 
     @classmethod
-    def open(cls, repo_name: str, *, base_dir: str = "data/structgraph") -> CodeGraph:
+    def open(cls, repo_name: str, *, base_dir: str | None = None) -> CodeGraph:
         """打开已建好的图(不重建,省去 full_build)。db 不存在 → FileNotFoundError。"""
+        base_dir = base_dir or default_graph_root()
         _require_crg()
         from code_review_graph.graph import GraphStore
 

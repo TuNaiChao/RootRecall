@@ -166,6 +166,9 @@ class NativeMemoryService(MemoryService):
     async def list_items(self, scope: Scope, *, kind: str | None = None, include_invalid: bool = False) -> list[KnowledgeItem]:
         return self._store.list_items(scope, kind=kind, include_invalid=include_invalid)
 
+    async def list_scopes(self) -> list[tuple[str, int]] | None:
+        return self._store.list_scopes()
+
     # ── tier-3 ──
 
     async def consolidate(self, scope: Scope, *, repo_path: str | None = None) -> dict[str, Any]:

@@ -62,6 +62,11 @@ class MemoryService(abc.ABC):
         """列某 scope 的知识项(可按 kind 过滤、可含已失效)。"""
         raise NotImplementedError(f"{type(self).__name__} 未实现 list_items")
 
+    async def list_scopes(self) -> list[tuple[str, int]] | None:
+        """非空作用域及条数(可选能力;后端不支持 → None)。recall 空池提示用,治
+        「没传 codebase 探默认空池」的盲试(2026-08-26 实测)。"""
+        return None
+
     async def memorize_report(
         self,
         report_text: str,

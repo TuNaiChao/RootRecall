@@ -16,6 +16,9 @@ allowed-tools:
 
 你负责把**领域/项目知识**(协议语义、各层职责、技术原理这类"领域常理")调研清楚并记进 RootRecall 的长期记忆。网调、多源验证、聚结论是你的活;RootRecall 工具负责查历史记忆、落盘报告、记忆。
 
+> **快速路径(全文 30 秒版,简单问题照这就够)**:① `memory_recall(query=<主题>)` —— 工具会自动并查 general 池,命中同主题 → 直接出知识卡,不网调;② 没命中 → 网调,**≥2 独立权威源**;③ `memorize(kind=domain_knowledge, source_url=<主源>)` 落 general 池;④ 结论全带 source URL,记不住的细节读下文。
+
+
 **什么是领域知识**(区别于其他记忆):
 - **不是源码事实**(那是 onboarding/compare 的活,靠读码)—— 领域知识是协议/标准/技术的常理,源码里读不全,得上权威源查(官方 spec、RFC、标准文档、核心技术手册)。
 - **不是 bug 教训**(那是 bug-rca/backport 的活,锚某次 bug 的根因+补丁)—— 领域知识是 evergreen 的背景知识,不绑某次故障。
@@ -42,11 +45,12 @@ allowed-tools:
 3. **多源网调【核心】**(仅重跑路径):`websearch(<主题 + 权威词,如 "L2CAP specification" / "RFC 4.2">)` 撒网找候选源 → 挑**权威源**(官方 spec > RFC > 手册 > 博客)→ `webfetch(<权威源 URL>)` 精读。**每条结论至少 2 个独立源印证**:第一个源给结论,第二个源核实(尤其冲突/易错点,如协议版本差异)。记下每个源的 URL(主源进 `source_url`,辅源进报告)。本地有相关源码时可 `grep`/`read` 作第三重交叉验证(如查到协议说"X 函数触发 Y",去源码核实确有此调用)。
 4. **聚领域级结论**(仅重跑路径):把多源查到的零散点聚成**领域级解读** —— 这个协议/机制是干啥的(一句话职责)+ 核心状态机/流程(分几步、每步做啥)+ 关键约束/边界条件(什么情况触发、什么情况报错)+ 和相邻协议/层的关系。不要只罗列查到的片段,要讲清"为什么这么设计 / 这层在整个系统里的位置"。
 5. **聚知识卡【短路路径也走这】**:把(重跑得出的、或 recall 命中直接复用的)结论写成知识卡(见下面格式)。每条结论附 **source URL**(网调)或**用户提供的依据**(笔记)。
-6. **落调研报告**:`export_report` 落盘 .md(可选,用户要报告时落;纯记笔记可跳)。每条结论附 source URL,对齐防幻觉。
+6. **落调研报告**:`export_report(topic=<主题 slug,如 a2dp-protocol>)` 落盘 .md(可选,用户要报告时落;纯记笔记可跳)。**必传 topic** —— 同仓多主题报告不传会互相覆盖(实测:A2DP 报告盖掉连接流程对比报告)。每条结论附 source URL,对齐防幻觉。
 7. **memorize(仅重跑路径才记)**:重跑得出的新结论才 memorize。**短路路径不 memorize**(recall 已命中的事实 DB 里有了,重复记按 summary 算 id 会去重——不污染但白花一步)。
 
-   网调结论:`memorize(kind=domain_knowledge, kind_detail=domain, summary=<结论 + 因果>, source_url=<主源 URL>, codebase=<绑哪个仓或 general>, confidence=<你的把握,多源权威源 0.8-0.9,单源/博客 0.5-0.7>)`。
-   用户笔记:`memorize(kind=domain_knowledge, kind_detail=domain, summary=<用户给的笔记>, codebase=<相关仓或 general>, confidence=0.7)` —— 不传 source_url(用户笔记,source_tier 自动=stated)。
+   网调结论:`memorize(kind=domain_knowledge, kind_detail=domain, summary=<结论 + 因果>, source_url=<主源 URL>, confidence=<你的把握,多源权威源 0.8-0.9,单源/博客 0.5-0.7>)`。
+   用户笔记:`memorize(kind=domain_knowledge, kind_detail=domain, summary=<用户给的笔记>, confidence=0.7)` —— 不传 source_url(用户笔记,source_tier 自动=stated)。
+   **codebase 不用传**:domain_knowledge 一律落共享 `general` 池(工具层已强制,传了也会改写)—— 实测教训(2026-08-26):同一条 A2DP 知识一条记 bluez、一条记 general,recall 查一漏一。关联仓写进 summary/tags 里即可。
 
 ## 工具(按需调)
 
@@ -57,7 +61,7 @@ allowed-tools:
 | `webfetch(url)` | step 3 精读权威源(仅重跑路径) | 读官方 spec/RFC/手册正文;记 URL 做溯源 |
 | `read` / `grep` / `glob` | step 3 第三重交叉验证(可选) | 网调查到的协议行为,本地有源码时去核实(如查到"X→Y",grep 源码确有此调用) |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=domain_knowledge,kind_detail=domain,带 source_url(网调)/不带(笔记);**不需用户验证**。**短路路径不 memorize** |
-| `rootrecall_export_report(...)` | step 6 落盘(可选) | 写调研报告 .md;每条结论附 source URL |
+| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘(可选) | 写调研报告 .md;topic 必传防同仓多主题覆盖;每条结论附 source URL |
 
 ## 硬约束
 

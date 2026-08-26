@@ -628,6 +628,14 @@ class MemoryStore:
             clauses.append("invalid_at IS NULL AND superseded_by IS NULL")
         return int(self._conn.execute(f"SELECT COUNT(*) FROM knowledge_items WHERE {' AND '.join(clauses)}", params).fetchone()[0])
 
+    def list_scopes(self) -> list[tuple[str, int]]:
+        """非空作用域清单 [(codebase, 条数)] 条数降序 —— recall 空池提示用(2026-08-26 实测:
+        agent 没传 codebase 探默认空池连试两轮;列出非空池让它一次改对)。"""
+        rows = self._conn.execute(
+            "SELECT codebase, COUNT(*) AS c FROM knowledge_items GROUP BY codebase ORDER BY c DESC"
+        ).fetchall()
+        return [(r["codebase"], int(r["c"])) for r in rows]
+
     def search_bm25(self, query: str, scope: Scope, *, repo: str | None = None, limit: int = 20) -> list[tuple[KnowledgeItem, float]]:
         """BM25 全文检索(FTS5):返回 [(item, score)],score 越大越相关(bm25 取负归一)。
 

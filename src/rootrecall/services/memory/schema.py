@@ -259,4 +259,8 @@ class RecallHit(BaseModel):
         # 后续会话拿先验前先知道「这条没过真机」;真机确认后重提同补丁(verification=real_machine)
         # 换掉标记。位置学 corrected:跟在结论后面,不进 summary 污染内容键。
         unv = "  (未真机验证)" if "unverified" in self.tags else ""
-        return f"- {tag}{self.summary}{loc}{conf}{dt}{old}{corrected}{unv}{kid}".rstrip()
+        # 自由标签(2026-08-26 实测教训:短路判定要「主题对不对得上」,tags 是最快的主题域信号)。
+        # 纪律标记有专属渲染(unv/kid),不重复进 tags 列表。
+        vis_tags = [t for t in self.tags if t not in ("unverified", "verified_real_machine")][:4]
+        tg = f"  tags={'|'.join(vis_tags)}" if vis_tags else ""
+        return f"- {tag}{self.summary}{loc}{conf}{dt}{old}{corrected}{unv}{kid}{tg}".rstrip()

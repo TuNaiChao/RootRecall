@@ -37,7 +37,7 @@ allowed-tools:
 3. **锚定流程入口【核心·阶段 A】**(仅重跑路径):对**两版各跑一次** `search_codebase(query=<流程概念>, codebase=<各>)` + `repo_map(codebase=<各>)`。拿到**两版各自的入口函数群 + file:line**(工具只回索引内真实符号,防幻觉)。流程跨多个函数 → 用 `call_chain(symbol=<入口函数>, codebase=<各>)` 从入口多跳展开,看清整条流程涉及的函数链。
 4. **逐节点对照【阶段 B】**(仅重跑路径):① 把两版入口函数群**配对** —— 同名直接配;名字不同就 `read` 函数体判**是否同职责**(v20 的 `foo` ↔ v25 是否拆成了 `foo`+`bar`?)。配不上的标「v20 无 / v25 新增」。**函数配对是语义判断,无确定性工具**(各 codebase 结构图独立无联合图)。② 对配上的每对函数,`read` 两版完整函数体,讲清差异 —— 逻辑分叉 / 参数变化 / 新增校验 / 删除的步骤 / 重构。流程每个关键节点(入口、状态转换、资源释放...)都对照一遍。
 5. **聚流程级结论【阶段 C·短路路径也走这】**:把(重跑得出的、或 recall 命中直接复用的)节点差异聚成**流程级差异** —— 入口差异 / 状态机差异 / 新增环节 / 删除环节 / 重命名映射。给出因果解读:为什么 v25 多了某个环节(如新协议层)/ 为什么改名(职责拆分)。不要只罗列文件差异,要讲清流程层面变了什么。
-6. **落对比报告**:`export_report` 落盘对比报告 .md。**每条结论必须附双源 file:line**(v25 的 + v20 的),对齐 cited-reporter 防幻觉。**用户显式要求 AGENTS.md 时**才在同一调用传 `agents_md=True`(蒸馏 ≤60 行 agent 版写进目标仓根;默认不传——不问自写用户仓 = 越界;两版对比时只写用户指定的那个目标仓,不两个都写)。
+6. **落对比报告**:`export_report(topic=<主题 slug,如 connect-flow-compare>)` 落盘对比报告 .md(**必传 topic**,同仓多主题报告不传会互相覆盖)。**每条结论必须附双源 file:line**(v25 的 + v20 的),对齐 cited-reporter 防幻觉。**用户显式要求 AGENTS.md 时**才在同一调用传 `agents_md=True`(蒸馏 ≤60 行 agent 版写进目标仓根;默认不传——不问自写用户仓 = 越界;两版对比时只写用户指定的那个目标仓,不两个都写)。
 7. **memorize(仅重跑路径才记)**:重跑得出的新结论才 `memorize(kind=codebase_fact, kind_detail=architecture, summary=<两版流程差异 + 因果>, evidence=[<双源 file:line + 代码片段>], codebase=<项目名,如 bluez> —— 别带版本(对比事实跨版本复用,版本已体现在双源 evidence 里), confidence=<你的把握>)`。**短路路径不要 memorize**(recall 已命中的事实 DB 里有了,重复记浪费调用,且按 summary 算 id 会去重——不污染但白花一步)。这条事实读码即坐实,**不需等用户验证**。
 
 ## 工具(按需调)
@@ -50,15 +50,17 @@ allowed-tools:
 | `read` / `grep` / `glob` | step 4 读两版函数体(仅重跑路径) | **核心**:step 4 配对判同职责 + 逐节点对照全靠 read 两版函数体。**短路路径不用** |
 | `rootrecall_memory_recall(query, codebase?)` | **step 1 第一步**(codebase=项目名,查一次) | 命中同主题对比事实 → **短路直接出报告**(step 5/6),不重跑;这才是「秒答」。没命中才走完整调研 |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=codebase_fact,kind_detail=architecture,带双源 evidence;`codebase` 传项目名(如 `bluez`,不带版本);**不需用户验证**。**短路路径不 memorize**(DB 已有) |
-| `rootrecall_export_report(content, repo_path, out_dir)` | step 6 落盘 | 写对比报告 .md |
+| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘 | 写对比报告 .md;topic 必传防同仓多主题覆盖 |
 | `rootrecall_ensure_repo(name)` | 本地没仓 | 只读 clone |
 
 ## 硬约束
 
 - **只调研不改代码** —— 不 edit / 不 git apply / 不写源码;read-only 调研(和 upstream-merge/patch-review 一个标准)。
+- **search 命中全是外围就转 grep** —— 大仓(含 emulator/test 基建)对「连接流程」这类泛概念,search_codebase 会回外围符号(实测 bluez:top-6 全是 emulator/btdev.c、android/gatt.c,核心入口 device_connect_le 挤不进);此时果断改 grep 已知命名模式(`btd_`、`_connect$`、`device_`)锚定 src/ 核心文件再 read,别在搜索词上死磕。搜索留着探索未知模块用。
 - **两版函数配对是语义判断** —— 没有确定性工具能自动配对;各 codebase 结构图独立无跨版本联合图,`cross_version_diff` 也只支持同仓两 ref(两个独立仓无效)。必须 `read` 函数体判同职责。
 - **不用 cross_version_diff** —— 它是「同一个 git 仓的两个 ref」对比,v20/v25 这种两独立仓无效;两版差异靠各 codebase 检索 + read 对照。
-- **结论必须附双源 file:line** —— 每条差异结论都要标 v25 的 + v20 的 file:line,防幻觉,对齐 cited-reporter。
+- **结论必须附双源 file:line** —— 每条差异结论都要标 v25 的 + v20 的 file:line,防幻觉,对齐 cited-reporter。双源 file:line 锚「两版各自怎么写」;凡断言「与官方标准/SIG/RFC 不符」,必须另附规范原文 source_url(抓不到就写「标准值未核」,不凭训练记忆报标准值 —— 幻觉高发区)。
+- **「哪边改的」要三源归因** —— v20/v25 差异要说「fork 改的还是上游演进的」,有 upstream 基线必须对照第三源(upstream 同位置)再归因;没对照过就只报差异本身 + 双源 file:line,别猜方向。
 - **对比事实读码即记** —— 不像 bug/补丁要等真机验证;对比结论读码坐实,step 7 可直接 memorize(仅重跑路径),下次秒答。
 - **recall 命中就短路,不重跑** —— step 1 recall 命中同主题对比事实时,直接复用出报告,**不要为了「走完流程」又 search/read 一遍**。这是本 skill 的核心价值(下次秒答);重跑只在没命中/主题对不上时才做。短路路径不 memorize(DB 已有,重复记白花一步)。
 

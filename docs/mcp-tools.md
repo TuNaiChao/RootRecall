@@ -26,6 +26,8 @@ server 启动时解析一个**默认 codebase**,顺序:启动参数 `--codebase`
 
 不需要 `codebase` 参数的 6 个:validate_patch / export_patch / export_report(按绝对 `repo_path` 干活)、when_introduced(同)、fetch_patch(按 URL)、ensure_repo(按名字/URL 解析路径)。
 
+**近义名容错**(2026-08-25,实测教训:记忆吃项目名 `bluez`、索引/图吃注册名 `bluez-v25`,agent 连败多次才摸到正名):索引/图类工具的 `codebase` 参数按「精确 > 归一化(`_`↔`-`/大小写)> 唯一子串」三级解析 —— 唯一近义命中自动纠偏(输出头注明,如 `codebase 'bluez_v25' 近义解析为 'bluez-v25'`);多个候选则列出全部让 agent 一次改对;完全未知名列出本机已知清单(`rootrecall baseline ls` 同源:注册表 ∪ 索引清单 ∪ 结构图目录)。报错还区分「在册但没建图/索引」(指路 `rootrecall index` 重建)vs「完全未知」(指路 `baseline add`)。记忆三件套(memory_recall/memorize/dump)**不走**这套容错 —— 记忆 scope 吃项目名是既有语义(教训跨版本共享),版本线名留给索引/图工具。
+
 ## 工具一览
 
 | 工具 | 组 | 一句话 |
@@ -63,9 +65,11 @@ memory_recall(query: str, top_k: int = 5, kind: str | None = None, codebase: str
 | `query` | 自然语言问题(描述概念,不是猜符号名) |
 | `top_k` | 返回条数(默认 5) |
 | `kind` | 过滤:`bug_lesson`(历史修法)/ `codebase_fact`(代码事实)/ `domain_knowledge`(领域知识)/ `mental_model`(经验法则);省略 = 全部。给了 kind 会多取再过滤,不会饿死结果 |
-| `codebase` 🔀 | 覆盖查哪个仓的记忆(默认 = server 默认仓);记忆按仓隔离,不串库 |
+| `codebase` 🔀 | 覆盖查哪个仓的记忆(默认 = server 默认仓);记忆按仓隔离,不串库。**general 池永远并查**(见下) |
 
-定位 / 改补丁前先调它,复用同仓的历史根因和修法。输出每条带 file:line 溯源 + 置信度 + 时间;被纠正过的条目带「已被纠正」标记且检索降权(仍可见,作参考);`unverified` 条目带「(未真机验证)」显式渲染 —— 先验可用,坐实与否一眼可辨。
+定位 / 改补丁前先调它,复用同仓的历史根因和修法。输出每条带 file:line 溯源 + 置信度 + 时间 + tags(主题域标签,短路判定用);被纠正过的条目带「已被纠正」标记且检索降权(仍可见,作参考);`unverified` 条目带「(未真机验证)」显式渲染 —— 先验可用,坐实与否一眼可辨。
+
+**general 池并查**(2026-08-26 实测教训:同一条 A2DP 知识一条记 bluez、一条记 general,单池 recall 查一个漏一个):每次 recall 除你传的 codebase 外**总是并查共享 `general` 池**(领域知识所在地),命中按 id 去重、跨池条目前缀 `[general]` 标明;空结果列出非空作用域清单,`codebase` 传错一次就能改对(服务器默认作用域常常是空池)。配套写侧规则:`memorize(kind=domain_knowledge)` **无视传参强制落 general 池**。
 
 ### memory_memorize
 
@@ -128,6 +132,8 @@ search_codebase(query: str, top_k: int = 5, codebase: str | None = None) -> str
 | `codebase` 🔀 | 覆盖查哪个仓的索引 |
 
 **防幻觉契约**:结果只来自真实索引,每条带 `file:行区间 (kind symbol) score` + 首行内容 —— 模型拿不到一个编造的路径。检索路径(BM25+向量+RRF+重排)见[记忆模块分析](memory-module-analysis.md)。
+
+**排序先验**(2026-08-26 实测教训:bluez 问「连接流程」,top-6 全是 emulator/android 外围符号,核心入口 `device_connect_le` 挤不进):重排后按「符号粒度(module/私有 helper 降,公共入口不动)× 路径基建(test/tests/emulator/unit/example 等目录段、`*-test*`/`*-tester` 文件名降 0.70)」叠乘再排序 —— 测试/仿真基建**降而不剔**,专门查它们时仍可进 top-k。实务建议:泛概念查询若命中全是外围,果断转 grep 已知命名模式锚定核心文件(见 compare skill 的战术条)。
 
 ### blast_radius
 
@@ -239,12 +245,14 @@ export_patch(repo_path: str, out_dir: str = "data/bug_rca") -> str
 ### export_report
 
 ```python
-export_report(content: str, repo_path: str, out_dir: str = "data/bug_rca", agents_md: bool = False) -> str
+export_report(content: str, repo_path: str, out_dir: str = "data/bug_rca", agents_md: bool = False,
+              topic: str | None = None) -> str
 ```
 
 | 参数 | 说明 |
 |---|---|
 | `content` | 完整 markdown 报告(根因 + 证据 + 补丁要点 + validate 结果 + patch 路径 + memorize id) |
+| `topic` | 主题短 slug(如 `connect-flow-compare` / `a2dp-protocol` / `bug-1234`)→ 文件名 `<repo>-<topic>-rca.md`。**同仓多主题报告必传** —— 不传共用 `<repo>-rca.md` 会互相覆盖(2026-08-26 实测:A2DP 报告盖掉连接流程对比报告);同 topic 重跑 = 幂等覆盖并注明。省略 = 旧文件名(向后兼容) |
 | `agents_md` | 额外把报告蒸馏成 `<repo_path>/AGENTS.md`(「给 agent 看的 README」,opencode / claude code / cursor 原生读取)。**默认关** —— 不问不写进使用者的仓;仓里已有 AGENTS.md 时拒写不覆盖 |
 
 空 / 空白内容拒写。何时调同 export_patch:**用户开口要报告才调**(通常在真机验证通过后,迭代中不自动写)。检出带 bug 号时按 `<bug号>/` 双写归档。建议顺序:export_patch → memory_memorize → export_report(报告引用前两步的路径与 id,闭环才完整)。

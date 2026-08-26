@@ -188,6 +188,7 @@ flowchart TB
 - **skill 路由矩阵**(8 个 skill 的判据 + 易混对):[docs/skill-routing-matrix.md](docs/skill-routing-matrix.md)
 - **三支柱模块分析**:bug 定位 [docs/bug-rca-module-analysis.md](docs/bug-rca-module-analysis.md) · 代码调研 [docs/code-research-module-analysis.md](docs/code-research-module-analysis.md) · 记忆 [docs/memory-module-analysis.md](docs/memory-module-analysis.md)
 - **参考文档**:MCP 工具 [docs/mcp-tools.md](docs/mcp-tools.md) · 配置 [docs/configuration.md](docs/configuration.md) · CLI [docs/cli.md](docs/cli.md) · MCP 使用与设置(小白版)[docs/mcp-guide.md](docs/mcp-guide.md)
+- **踩坑记录**:开发/设计类(编号 #N,面试讲述版)[docs/踩坑记录.md](docs/踩坑记录.md) · 测试过程类(环境/API/agent 行为,编号 TN)[docs/测试踩坑记录.md](docs/测试踩坑记录.md)
 - **外部调研**:Multica 源码分析与接入方案(把本设备纳管为节点、远程派活)[docs/research/multica/README.md](docs/research/multica/README.md)
 - **工作约定 + 仓库地图 + 命令**:仓库根 [CLAUDE.md](CLAUDE.md)
 

@@ -30,6 +30,45 @@ def test_prior_buckets():
     assert _granularity_prior("method", "LanceDBStore.upsert") == 1.0  # 公共方法不降
 
 
+# ── _testinfra_prior:路径级测试基建先验(2026-08-26 实测:bluez「连接流程」top-6
+#    全是 emulator/android 外围,核心入口挤不进)──────────────────────────────────
+
+
+def test_testinfra_prior_buckets():
+    from rootrecall.services.code_index.retrieval import _PRIOR_TESTINFRA, _testinfra_prior
+
+    assert _testinfra_prior("emulator/bthost.c") == _PRIOR_TESTINFRA       # 仿真目录
+    assert _testinfra_prior("unit/test_foo.c") == _PRIOR_TESTINFRA         # test 目录段
+    assert _testinfra_prior("src/mgmt-tester.c") == _PRIOR_TESTINFRA       # -tester 文件名
+    assert _testinfra_prior("src/android_test.c") == _PRIOR_TESTINFRA      # _test 文件名
+    assert _testinfra_prior("") == 1.0                                     # 空路径不降
+    assert _testinfra_prior("src/device.c") == 1.0                         # 产品代码不降
+    assert _testinfra_prior("android/gatt.c") == 1.0                       # 真构建变体不降(交给 rerank)
+    assert _testinfra_prior("latest/greatest.c") == 1.0                    # 子串不算,按路径段判
+
+
+def test_testinfra_prior_demotes_peripheral_in_retrieve():
+    """rerank 同分下,emulator 外围符号被路径先验压下、src/ 核心入口顶上(实测翻车形状)。"""
+    from rootrecall.services.code_index.retrieval import _PRIOR_TESTINFRA
+
+    def cand_at(symbol: str, path: str) -> dict:
+        c = _cand(symbol, "function")
+        c["file"] = path
+        c["id"] = f"{path}:{symbol}"
+        return c
+
+    cands = [
+        cand_at("bthost_send_cmd", "emulator/bthost.c"),   # 外围,重排分高
+        cand_at("device_connect_le", "src/device.c"),      # 核心入口,重排分低
+    ]
+    rr = _FixedReranker({"bthost_send_cmd": 0.60, "device_connect_le": 0.50})
+    res = retrieve("connect flow", "repo", _FakeEmbedder(), _FakeStore(cands), rr, top_k=2)
+    # 0.60×0.70=0.42 < 0.50×1.0 —— 核心入口反超(与粒度先验同乘法语义)
+    assert res.hits[0].symbol == "device_connect_le"
+    assert res.hits[1].symbol == "bthost_send_cmd"
+    assert res.hits[1].score == 0.60 * _PRIOR_TESTINFRA
+
+
 # ── retrieve:池扩满 + 先验重排 ───────────────────────────────────────────────
 
 

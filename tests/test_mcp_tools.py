@@ -76,26 +76,34 @@ def test_blast_radius_empty_input():
     assert "未传 changed_files" in out
 
 
-def test_blast_radius_not_built():
+def _known_nonempty(monkeypatch):
+    """让近义解析层确定走「没有叫 X」分支:本机已知集固定为一个无关名(防真机 data 漏进测试)。"""
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"some-other-cb": {"index"}})
+
+
+def test_blast_radius_not_built(monkeypatch):
     """图未建(或 code-review-graph 后端未装)→ 优雅返回提示串,绝不漏 traceback。"""
+    _known_nonempty(monkeypatch)
     mcp = build_server()
     out = _call(mcp, "blast_radius",
                 {"changed_files": ["src/x.c"], "codebase": "nonexistent_xyz_repo_42"})
     assert "Traceback" not in out, out
-    # 三种友好提示之一:图未建 / 后端未装 / 失败
-    assert any(k in out for k in ("未建", "不可用", "失败")), out
+    # 友好提示之一:图未建 / 后端未装 / 失败 / 近义容错(没有叫 / 匹配到多个)
+    assert any(k in out for k in ("未建", "不可用", "失败", "没有叫", "匹配到多个")), out
 
 
 # ════════════════════════ call_chain 工具 ══════════════════════════
 
-def test_call_chain_not_built():
+def test_call_chain_not_built(monkeypatch):
     """图未建(或 CRG 后端未装)→ 优雅返回提示串,绝不漏 traceback(策略同 blast_radius)。"""
+    _known_nonempty(monkeypatch)
     mcp = build_server()
     out = _call(mcp, "call_chain",
                 {"symbol": "some_function", "codebase": "nonexistent_xyz_repo_42"})
     assert "Traceback" not in out, out
-    # 三种友好提示之一:图未建 / 后端未装 / 失败
-    assert any(k in out for k in ("未建", "不可用", "失败")), out
+    # 友好提示之一:图未建 / 后端未装 / 失败 / 近义容错(没有叫 / 匹配到多个)
+    assert any(k in out for k in ("未建", "不可用", "失败", "没有叫", "匹配到多个")), out
 
 
 def test_call_chain_bad_direction(monkeypatch):
@@ -111,21 +119,25 @@ def test_call_chain_bad_direction(monkeypatch):
             raise ValueError("direction 需为 callers / callees / both,收到 'sideways'")
 
     # 替掉 classmethod open:经类访问的普通函数不绑 cls,CodeGraph.open(target) → 假图。
-    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target: _FakeGraph())
+    # (**kw:工具层现在传 base_dir=reanchor 路径;known_codebases 认得该名,过近义解析层)
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"fake_cb": {"graph"}})
     mcp = build_server()
-    out = _call(mcp, "call_chain", {"symbol": "foo", "direction": "sideways"})
+    out = _call(mcp, "call_chain", {"symbol": "foo", "direction": "sideways", "codebase": "fake_cb"})
     assert "Traceback" not in out, out
     assert "没法算" in out, out  # ValueError 被工具兜底成友好串
 
 
 # ════════════════════════ repo_map 工具(#38)════════════════════════
 
-def test_repo_map_not_built():
+def test_repo_map_not_built(monkeypatch):
     """图未建(或 CRG 后端未装)→ 优雅返回提示串,绝不漏 traceback(策略同 call_chain)。"""
+    _known_nonempty(monkeypatch)
     mcp = build_server()
     out = _call(mcp, "repo_map", {"codebase": "nonexistent_xyz_repo_42"})
     assert "Traceback" not in out, out
-    assert any(k in out for k in ("未建", "不可用", "失败")), out
+    assert any(k in out for k in ("未建", "不可用", "失败", "没有叫", "匹配到多个")), out
 
 
 def test_repo_map_success_via_fake_graph(monkeypatch):
@@ -146,7 +158,9 @@ def test_repo_map_success_via_fake_graph(monkeypatch):
                     "top_symbols": [{"qualified_name": "f.c::main", "file": "f.c", "pagerank": 0.5}],
                     "note": ""}
 
-    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target: _FakeGraph())
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"fake_cb": {"graph"}})
     mcp = build_server()
     out = _call(mcp, "repo_map", {"map_tokens": 512, "codebase": "fake_cb"})
     assert "Traceback" not in out, out
@@ -183,9 +197,11 @@ def test_repo_map_truncation_note_via_fake_graph(monkeypatch):
                     "top_symbols": [{"qualified_name": "f.c::main", "file": "f.c", "pagerank": 0.5}],
                     "note": ""}
 
-    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target: _BigGraph())
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _BigGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"fake_cb": {"graph"}})
     mcp = build_server()
-    out = _call(mcp, "repo_map", {})
+    out = _call(mcp, "repo_map", {"codebase": "fake_cb"})
     assert "Traceback" not in out, out
     assert "[截断" in out and "减小 map_tokens" in out, out  # note:截断事实 + 补取路径
     # 总长被钳在限内(header 一行 + body 8000)
@@ -193,13 +209,14 @@ def test_repo_map_truncation_note_via_fake_graph(monkeypatch):
 
 # ════════════════════════ repo_overview 工具(#14,onboarding skill 主数据源)════════════════════════
 
-def test_repo_overview_not_built():
+def test_repo_overview_not_built(monkeypatch):
     """图未建(或 CRG 后端未装)→ 优雅返回提示串,绝不漏 traceback(策略同 repo_map)。"""
+    _known_nonempty(monkeypatch)
     mcp = build_server()
     out = _call(mcp, "repo_overview", {"codebase": "nonexistent_xyz_repo_42"})
     assert "Traceback" not in out, out
-    # 三种友好提示之一:图未建 / 后端未装 / 失败
-    assert any(k in out for k in ("未建", "不可用", "失败")), out
+    # 友好提示之一:图未建 / 后端未装 / 失败 / 近义容错(没有叫 / 匹配到多个)
+    assert any(k in out for k in ("未建", "不可用", "失败", "没有叫", "匹配到多个")), out
 
 
 def test_repo_overview_success_via_fake_graph(monkeypatch):
@@ -230,7 +247,9 @@ def test_repo_overview_success_via_fake_graph(monkeypatch):
             return [{"name": "bridge_x", "qualified_name": "g.c::bridge_x",
                      "betweenness": 0.9, "community_id": 0}]
 
-    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target: _FakeGraph())
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"fake_cb": {"graph"}})
     mcp = build_server()
     out = _call(mcp, "repo_overview", {"top_n": 8, "codebase": "fake_cb"})
     assert "Traceback" not in out, out
@@ -271,7 +290,9 @@ def test_repo_overview_large_repo_caps_communities_and_keeps_hubs(monkeypatch):
         def bridge_nodes(self, *, top_n: int = 15):
             return [{"name": "bridge_x", "qualified_name": "g.c::bridge_x", "betweenness": 0.9}]
 
-    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target: _FakeGraph())
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"big_cb": {"graph"}})
     mcp = build_server()
     # max_communities=30:50 个社区取前 30 个,每个长 name+description → 压成 member_count+样本后仍超 12000。
     out = _call(mcp, "repo_overview", {"max_communities": 30, "codebase": "big_cb"})
@@ -377,6 +398,34 @@ def test_export_report_writes_file(tmp_path):
     assert report_file.read_text(encoding="utf-8") == report_md
 
 
+def test_export_report_topic_filename(tmp_path):
+    """topic 参数:<repo>-<topic>-rca.md,治同仓多主题报告互相覆盖(2026-08-26 实测:A2DP
+    报告盖掉连接流程对比报告)。同 topic 重跑 = 幂等覆盖并注明;不传 topic = 旧文件名不变。"""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    out_dir = tmp_path / "out"
+    mcp = build_server()
+    # ① 两个主题 → 两个文件,互不覆盖
+    _call(mcp, "export_report", {"content": "# 对比\n", "repo_path": str(repo),
+                                 "out_dir": str(out_dir), "topic": "connect-flow-compare"})
+    out2 = _call(mcp, "export_report", {"content": "# A2DP\n", "repo_path": str(repo),
+                                        "out_dir": str(out_dir), "topic": "a2dp protocol"})
+    assert (out_dir / "myrepo-connect-flow-compare-rca.md").is_file()
+    # topic 里的空白归一成连字符
+    assert (out_dir / "myrepo-a2dp-protocol-rca.md").is_file(), out2
+    assert (out_dir / "myrepo-connect-flow-compare-rca.md").read_text(encoding="utf-8") == "# 对比\n"
+    # ② 同 topic 重跑 → 覆盖 + 注明(幂等,正常)
+    out3 = _call(mcp, "export_report", {"content": "# 对比 v2\n", "repo_path": str(repo),
+                                        "out_dir": str(out_dir), "topic": "connect-flow-compare"})
+    assert "已覆盖同名文件" in out3, out3
+    assert (out_dir / "myrepo-connect-flow-compare-rca.md").read_text(encoding="utf-8") == "# 对比 v2\n"
+    # ③ 不传 topic → 旧命名(向后兼容)
+    out4 = _call(mcp, "export_report", {"content": "# 旧式\n", "repo_path": str(repo),
+                                        "out_dir": str(out_dir)})
+    assert "myrepo-rca.md" in out4, out4
+    assert (out_dir / "myrepo-rca.md").is_file()
+
+
 def test_export_report_agents_md_opt_in(tmp_path):
     """#5 AGENTS.md 产出:默认关(不传 → 仓根无 AGENTS.md,不问自写用户仓);传 agents_md=True → 写仓根。
 
@@ -441,6 +490,8 @@ class _FakeMemSvc:
         self.memorize_items: list = []              # 记录传入的 KI(验 corrects 等字段透传)
         self.list_items_calls: list = []          # memory_dump 用(记录每次调用的 scope/kind/include_invalid)
         self.list_items_return: list = []         # 注入返回值(默认空 → 工具走空提示分支)
+        self.search_returns: dict = {}            # 按 codebase 注入 search 返回(union 测试用;缺省 [])
+        self.list_scopes_return: list | None = None  # list_scopes 注入(None = 后端不支持)
 
     async def recall(self, query, scope, *, top_k=None):  # noqa: ANN001 —— 假对象,签名宽松
         self.recall_scopes.append(scope)
@@ -448,7 +499,10 @@ class _FakeMemSvc:
 
     async def search(self, query, scope, *, top_k=5, **kw):  # noqa: ANN001 —— memory-only 路(memory_recall 工具用)
         self.search_scopes.append(scope)
-        return []
+        return list(self.search_returns.get(scope.codebase, []))
+
+    async def list_scopes(self):  # noqa: ANN001 —— recall 空池提示用
+        return self.list_scopes_return
 
     async def memorize(self, items, scope):  # noqa: ANN001
         self.memorize_scopes.append(scope)
@@ -460,8 +514,14 @@ class _FakeMemSvc:
         return self.list_items_return
 
 
-def test_search_codebase_per_call_codebase():
-    """search_codebase 传 codebase → 真去查那个仓:提示里回显 per-call 名(非闭包默认)。"""
+def test_search_codebase_per_call_codebase(monkeypatch):
+    """search_codebase 传 codebase → 真去查那个仓:提示里回显 per-call 名(非闭包默认)。
+
+    monkeypatch known_codebases 把该名放进已知集 —— 绕过近义容错层(那层对未知名会
+    提前返回「没有叫 X」,到不了索引检查),直测 per-call 覆盖语义本身。
+    """
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"nonexistent_xyz_cb_42": {"index"}})
     mcp = build_server()
     out = _call(mcp, "search_codebase",
                 {"query": "p2p scan routing", "codebase": "nonexistent_xyz_cb_42"})
@@ -476,6 +536,7 @@ def test_memory_recall_per_call_codebase(monkeypatch):
 
     同时确认走的是 memory-only 的 search(不混 code chunk),不是混合检索的 recall ——
     见 memory-design-review-2026-08-12:memory_recall 职责是翻长期记忆,代码检索另有 search_codebase。
+    注:工具会额外并查一次 general 池(2026-08-26 起),所以 search_scopes[0] 才是 per-call 名。
     """
     fake = _FakeMemSvc()
     monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
@@ -485,7 +546,46 @@ def test_memory_recall_per_call_codebase(monkeypatch):
     assert "codebase=nonexistent_xyz_cb_42" in out, out
     assert fake.search_scopes, "memory-only search 没被调(应走 svc.search 不是 svc.recall)"
     assert not fake.recall_scopes, "memory_recall 不该走混合检索 svc.recall(会返 code chunk)"
-    assert fake.search_scopes[-1].codebase == "nonexistent_xyz_cb_42"
+    assert fake.search_scopes[0].codebase == "nonexistent_xyz_cb_42"
+    assert fake.search_scopes[-1].codebase == "general"  # 并查 general 池(T11 修复)
+
+
+def test_memory_recall_union_general_pool(monkeypatch):
+    """recall 并查 general 池:两池命中都出、按 item_id 去重、跨池命中带 [池名] 前缀。
+
+    2026-08-26 实测教训(A2DP 裂池):bluez 池一条 + general 池一条,单池查询「查一个漏一个」。
+    """
+    from rootrecall.services.memory.schema import RecallHit
+
+    def hit(summary: str, score: float, repo: str, item_id: str) -> RecallHit:
+        return RecallHit(summary=summary, score=score, kind="domain_knowledge",
+                         repo=repo, item_id=item_id, confidence=0.9, tags=["a2dp", "bluetooth"])
+
+    fake = _FakeMemSvc()
+    # 同一条知识裂在两池(id 相同 → 去重只出一次);general 另有一条独有
+    dup = hit("A2DP 高级音频分发(裂池重复条)", 0.9, "bluez", "abc12345")
+    only_general = hit("A2DP AVDTP PSM 0x0019", 0.8, "general", "def67890")
+    fake.search_returns = {"bluez": [dup], "general": [dup, only_general]}
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_recall", {"query": "A2DP 蓝牙", "codebase": "bluez", "top_k": 5})
+    assert "A2DP 高级音频分发" in out and "AVDTP" in out, out          # 两池命中都在
+    assert out.count("A2DP 高级音频分发(裂池重复条)") == 1, out        # 同 id 去重
+    assert "[general] " in out, out                                    # 跨池命中亮明池子
+    assert "tags=a2dp" in out, out                                     # 主题域标签可见(短路判定提速)
+    assert fake.search_scopes[0].codebase == "bluez" and fake.search_scopes[-1].codebase == "general"
+
+
+def test_memory_recall_miss_lists_scopes(monkeypatch):
+    """recall 空结果 → 列非空作用域,agent 一次改对 codebase(治默认空池盲试,2026-08-26 实测)。"""
+    fake = _FakeMemSvc()
+    fake.list_scopes_return = [("bluez", 6), ("general", 1)]
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_recall", {"query": "a2dp protocol"})
+    assert "No memory found" in out, out
+    assert "非空作用域:bluez(6)、general(1)" in out, out
+    assert "已并查 general" in out, out
 
 
 def test_memory_memorize_per_call_codebase(monkeypatch):
@@ -500,6 +600,25 @@ def test_memory_memorize_per_call_codebase(monkeypatch):
     assert "codebase=nonexistent_xyz_cb_42" in out, out
     assert fake.memorize_scopes, "memorize 没被调"
     assert fake.memorize_scopes[-1].codebase == "nonexistent_xyz_cb_42"
+
+
+def test_memory_memorize_domain_knowledge_forced_general(monkeypatch):
+    """domain_knowledge 强制入 general 池:传了别的 codebase 也被改写,输出注明原传值。
+
+    2026-08-26 实测教训:同一条 A2DP 知识一条记 bluez、一条记 general,recall 查一漏一 ——
+    写侧归一(全进 general)+ 读侧并查(memory_recall union)双向堵。
+    """
+    fake = _FakeMemSvc()
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_memorize", {
+        "kind": "domain_knowledge", "summary": "A2DP 跑在 AVDTP 上,PSM 0x0019",
+        "codebase": "bluez", "source_url": "https://www.bluetooth.com/specifications/a2dp/",
+    })
+    assert "codebase=general" in out, out
+    assert "统一入 general" in out and "bluez" in out, out  # 注明原传值
+    assert fake.memorize_scopes[-1].codebase == "general"
+    assert fake.memorize_items[-1].scope.codebase == "general"
 
 
 def test_memory_memorize_with_corrects(monkeypatch):

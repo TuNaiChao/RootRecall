@@ -280,6 +280,39 @@ def _default_clone_dir() -> Path:
     return data_root() / "repos"
 
 
+def known_codebases() -> dict[str, set[str]]:
+    """本机全部已知代码库名 → 证据来源集({"registry","index","graph"} 的子集)。
+
+    三源并集:注册表(baseline add / checkout 落的名)+ 向量索引清单
+    (data/code_index/<名>/index_manifest.json)+ 结构图目录(data/structgraph/<名>/graph.db)。
+    MCP 工具层拿它做 codebase 近义名容错(名字纠偏 / 候选列举 / 「没建索引 vs 没建图」
+    区分报错)。任一源缺失/损坏 → 跳过该源,绝不让列名单这件事挡了工具主链路。
+    """
+    out: dict[str, set[str]] = {}
+
+    def _add(name: str, src: str) -> None:
+        if name and name not in (".", ".."):
+            out.setdefault(name, set()).add(src)
+
+    try:
+        for rec in RepoRegistry().list():
+            _add(rec.name, "registry")
+    except Exception:  # noqa: BLE001 —— repos.yaml 坏 → 只剩索引/图两源,照样列
+        pass
+    for root, marker, src in (
+        (_default_index_dir(), "index_manifest.json", "index"),
+        (data_root() / "structgraph", "graph.db", "graph"),
+    ):
+        try:
+            if root.is_dir():
+                for sub in root.iterdir():
+                    if (sub / marker).exists():
+                        _add(sub.name, src)
+        except OSError:
+            pass
+    return out
+
+
 def _today() -> str:
     import datetime
     return datetime.date.today().isoformat()

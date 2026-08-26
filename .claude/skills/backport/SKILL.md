@@ -41,7 +41,7 @@ allowed-tools:
 4. **取 v20 上下文**:`call_chain`/`blast_radius`(传 v20 的 codebase)看目标函数的调用链和影响面 —— 适配时别漏 caller(改了函数行为可能波及调用方),也别漏 callee。
 5. **适配 fix 到 v20**:用 `edit` 直接改 v20 仓里目标函数对应的文件。路径/签名在两版间常漂移(如 `lib/bluetooth/sdp.c` vs `lib/sdp.c`),别指望 v25 的 patch 原样打得上 —— 读懂 v20 现状,照 v25 的**修复意图**改,不是照搬行号。可用 `cross_version_diff` 或 `bash git diff` 看两版差异辅助理解,但改的是 v20 的现状代码。
 6. **验 apply【硬门】**:`validate_patch(<你改出的补丁>, <v20_repo_path>)`。补丁从你对 v20 工作区的实际改动取(或 `export_patch` 落盘后读出来)。打不上 → 看日志找原因(上下文漂移?改错文件?)→ 回 step 5 改 → 再验,直到干净 apply(或判定真 `incompatible` 报告卡住点)。
-7. **出 backport 卡 + 落盘**:`export_patch` 落盘适配后的补丁 + `export_report` 落盘 backport 卡。**到这一步止,先别 memorize**。
+7. **出 backport 卡 + 落盘**:`export_patch` 落盘适配后的补丁 + `export_report(topic=<bug 短标识>)` 落盘 backport 卡(topic 防同仓多主题报告互相覆盖)。**到这一步止,先别 memorize**。
 8. **用户真机验证通过后才 memorize** —— 用户反馈 backport 已编译/真机验证通过后,再 `memorize(kind=bug_lesson, summary=<漏洞+fix-point+两版适配要点>, commit_sha=<v25 fix sha>, fix_patch=<适配后补丁>, tags=["backport","<v20代号>","<v25代号>"])`。
 
 ## 工具(按需调)
@@ -55,7 +55,7 @@ allowed-tools:
 | `rootrecall_cross_version_diff(base, head, repo_path)` | step 5 理解两版差异(可选) | 同仓两 ref 对比;两独立仓需先 `git fetch` 一边到另一边的仓里 |
 | `rootrecall_validate_patch(patch, repo_path)` | step 6 —— 硬门 | 只验 apply 不验修对;`repo_path` 传 v20 仓 |
 | `rootrecall_export_patch(repo_path, out_dir)` | step 7 落盘 | 把 v20 工作区的适配改动写成补丁 |
-| `rootrecall_export_report(content, repo_path, out_dir)` | step 7 落盘 | 写 backport 卡 .md |
+| `rootrecall_export_report(content, repo_path, topic=<bug 短标识>)` | step 7 落盘 | 写 backport 卡 .md;topic 防同仓覆盖 |
 | `rootrecall_memory_recall(query, codebase?)` | step 3 前后 | 翻同类漏洞 / 历史回移植决策(先验是线索不是答案);`codebase` 传**项目名**(如 `sdp`,不带 v20/v25) |
 | `rootrecall_memory_memorize(...)` | **用户验证通过后**才调 | `commit_sha` 传 v25 fix sha;`fix_patch` 传适配后补丁;`codebase` 传**项目名** —— **别传 v20 索引名**:记忆按 codebase 隔离,传版本名会把教训锁进版本孤岛(v25 侧翻不到);版本信息写进 summary/sha |
 | `rootrecall_ensure_repo(name)` | 本地没这个仓 | clone |

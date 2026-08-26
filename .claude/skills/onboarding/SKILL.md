@@ -38,7 +38,7 @@ allowed-tools:
 3. **俯瞰架构【阶段 1·结构快照】**(仅重跑路径):`repo_overview(codebase=<codebase>)` 一次拿全**社区清单(模块边界)+ hub_nodes(核心枢纽)+ bridge_nodes(架构瓶颈)+ 耦合告警(哪两个模块边太多)**;`repo_map(codebase=<codebase>)` 拿 PageRank 符号俯瞰图(最重要的函数)。读出:这仓分几大模块、哪些是核心 hub、哪些是架构瓶颈(bridge)、哪两个模块高耦合(>10 边告警)。这是「先看项目形状再读码」,比一上来就扎进源文件快得多。
 4. **挑一条旅程 + 端到端走【阶段 4·核心】**(仅重跑路径):挑主旅程入口 —— 默认 `repo_overview` hub_nodes 排第一的(全仓被依赖最多的入口);用户指定了主题就 `search_codebase(query=<主题概念>, codebase=<codebase>)` 定位用户要的那条旅程入口。从入口 `call_chain(symbol=<入口函数>, codebase=<codebase>)` 多跳展开,看清整条旅程涉及的函数链。**逐节点 `read` 完整函数体**,讲清每步做什么(状态转换 / 资源申请释放 / 错误处理)。这是「trace one real user journey end-to-end」,也是新人最容易上手的一条主线。顺手记下命名约定、错误处理风格、日志方式(读码时自然发现),每条都要带 file:line。
 5. **聚导览级结论【短路路径也走这】**:把(重跑得出的、或 recall 命中直接复用的)结构快照 + 旅程走读聚成**导览级解读** —— 系统分成几大模块(为什么这么分)+ 核心入口是哪个(为什么是它)+ 一条主旅程怎么走(每步 file:line)+ 架构风险点(高耦合对 / bridge 瓶颈)+ 新人最该先读哪几个文件。不要只罗列符号,要讲清「为什么」。
-6. **落导览报告**:`export_report` 落盘导览报告 .md。**每条结论必须附 file:line**,对齐 cited-reporter 防幻觉。**用户显式要求 AGENTS.md 时**(如「生成 AGENTS.md」「让以后的 agent 自动了解这仓」):同一调用传 `agents_md=True`,并在 content 里蒸馏出 ≤60 行的 agent 版(架构速览 + 核心入口 + 命名约定 + 已知坑,精不要全——冗长的 AGENTS.md 反而拖累 agent);默认不传,不问自写入用户仓 = 越界。
+6. **落导览报告**:`export_report(topic=<主题 slug,如 arch-overview 或 <模块名>)` 落盘导览报告 .md(**必传 topic**,同仓多主题报告不传会互相覆盖)。**每条结论必须附 file:line**,对齐 cited-reporter 防幻觉。**用户显式要求 AGENTS.md 时**(如「生成 AGENTS.md」「让以后的 agent 自动了解这仓」):同一调用传 `agents_md=True`,并在 content 里蒸馏出 ≤60 行的 agent 版(架构速览 + 核心入口 + 命名约定 + 已知坑,精不要全——冗长的 AGENTS.md 反而拖累 agent);默认不传,不问自写入用户仓 = 越界。
 7. **memorize(仅重跑路径才记)**:重跑得出的新结论才 `memorize(kind=codebase_fact, kind_detail=architecture, summary=<架构导览 + 因果>, evidence=[<file:line + 代码片段>], codebase=<codebase>, confidence=<你的把握>)`。**短路路径不要 memorize**(recall 已命中的事实 DB 里有了,重复记浪费调用,且按 summary 算 id 会去重——不污染但白花一步)。这条事实读码即坐实,**不需等用户验证**。
 
 ## 工具(按需调)
@@ -52,14 +52,15 @@ allowed-tools:
 | `read` / `grep` / `glob` | step 4 读函数体(仅重跑路径) | **核心**:step 4 逐节点走旅程全靠 read 函数体。**短路路径不用** |
 | `rootrecall_memory_recall(query, codebase?)` | **step 1 第一步** | 命中同主题导览事实 → **短路直接出报告**(step 5/6),不重跑;这才是「秒答」。没命中才走完整调研 |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=codebase_fact,kind_detail=architecture,带 file:line evidence;**不需用户验证**。**短路路径不 memorize**(DB 已有) |
-| `rootrecall_export_report(content, repo_path, out_dir)` | step 6 落盘 | 写导览报告 .md |
+| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘 | 写导览报告 .md;topic 必传防同仓多主题覆盖 |
 | `rootrecall_ensure_repo(name)` | 本地没仓 | 只读 clone |
 
 ## 硬约束
 
 - **只调研不改代码** —— 不 edit / 不 git apply / 不写源码;read-only 调研(和 upstream-merge/patch-review/compare 一个标准)。
 - **挑哪条旅程是语义判断** —— 没有确定性工具能自动挑出最有代表性的旅程;默认 `repo_overview` hub_nodes 排第一(全仓被依赖最多的入口),用户指定主题优先。忌挑边缘函数当主旅程误导新人。
-- **结论必须附 file:line** —— 每条架构结论都要标 file:line,防幻觉(对抗「模型编造 API/把两个相似函数当同一个/编造调用关系/抹平怪代码」)。
+- **结论必须附 file:line** —— 每条架构结论都要标 file:line,防幻觉(对抗「模型编造 API/把两个相似函数当同一个/编造调用关系/抹平怪代码」)。但 file:line 只锚「代码确实这么写」;凡断言「官方标准/SIG/RFC 规定值」「与标准不符」,必须另附规范原文 source_url(抓不到就写「标准值未核」,不凭训练记忆报 —— 标准号/UUID 是幻觉高发区)。
+- **「本仓特有」先对照上游** —— 断言「这仓自己改的/特有的」前,有 upstream 基线就先 `search_codebase`/`read` 对照同位置;没对照过就别写死归因,降级写「与常见实现不同」+ file:line。
 - **导览事实读码即记** —— 不像 bug/补丁要等真机验证;架构结论读码坐实,step 7 可直接 memorize(仅重跑路径),下次秒答。
 - **recall 命中就短路,不重跑** —— step 1 recall 命中同主题导览事实时,直接复用出报告,**不要为了「走完流程」又 repo_overview/read 一遍**。这是本 skill 的核心价值(下次秒答);重跑只在没命中/主题对不上时才做。短路路径不 memorize(DB 已有,重复记白花一步)。
 

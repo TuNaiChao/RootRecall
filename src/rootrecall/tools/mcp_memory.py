@@ -77,6 +77,71 @@ def _resolve_repo_path_arg(name_or_path: str) -> str:
     return name_or_path  # 查不到 → 原样交下游报错(agent 会看到老格式的"不是目录"提示)
 
 
+# ── codebase 近义名容错(2026-08-25 实测教训)─────────────────────────────────
+# 记忆吃项目名(bluez,教训跨版本共享),索引/图吃注册名(bluez-v25)—— agent 从记忆
+# 拿到 "bluez" 直接传工具,四连败后才摸到正名。这里做「精确 > 归一化 > 唯一子串」三级
+# 解析:唯一命中自动纠偏并注明,多个命中列出候选让 agent 一次改对,全落空给出本机已
+# 知清单。只影响原本就要报错的名字;精确名走快路,零行为变化。
+
+
+def _norm_codebase(name: str) -> str:
+    """近义匹配归一:去首尾空白与斜杠 + lower + 下划线归一连字符。"""
+    return name.strip().strip("/").lower().replace("_", "-")
+
+
+def _match_codebase(requested: str, known) -> tuple[str | None, list[str]]:
+    """在 known(可迭代名集)里找 requested 的近义名。
+
+    匹配级:精确(原样在册)→ 归一化精确(bluez_v25 ↔ bluez-v25)→ 子串双向包含
+    (bluez ⊂ bluez-v25;bluez-v25-5.85 ⊃ bluez-v25)。子串命中**唯一**才自动采用;
+    多个 → (None, 候选)交调用方列举;全落空 → (None, [])。空请求 → (None, [])。
+    """
+    q = _norm_codebase(requested)
+    if not q:
+        return None, []
+    if requested in known:
+        return requested, []
+    by_norm = {n: k for k in known if (n := _norm_codebase(k))}
+    if q in by_norm:
+        return by_norm[q], []
+    subs = sorted(orig for norm, orig in by_norm.items() if q in norm or norm in q)
+    if len(subs) == 1:
+        return subs[0], subs
+    return None, subs
+
+
+def _resolve_active_codebase(raw: str) -> tuple[str | None, str, dict[str, set[str]]]:
+    """工具层 codebase 名解析(近义容错)。返回 (规范名 | None, 说明行, 名→来源集)。
+
+    名字为 None 时说明行是完整错误串(工具直接 return 它);名字在时说明行要么为空
+    (精确命中,输出零变化)要么是一行纠偏注记(拼进输出头,agent 可见被纠到哪个库)。
+    来源集来自 registry.known_codebases(),调用方用它区分「没建索引」vs「没建图」。
+    """
+    from rootrecall.services.repos.registry import known_codebases
+
+    known = known_codebases()
+    if raw in known:
+        return raw, "", known
+    matched, subs = _match_codebase(raw, known)
+    if matched:
+        return matched, f"codebase '{raw}' 近义解析为 '{matched}'。", known
+    if subs:
+        return None, (f"codebase '{raw}' 匹配到多个代码库:{'、'.join(subs)}。"
+                      f"传其一重试(本机全部:`rootrecall baseline ls`)。"), known
+    if known:
+        return None, (f"没有叫 '{raw}' 的代码库。本机已知:{'、'.join(sorted(known))};"
+                      f"查全部 `rootrecall baseline ls`。"), known
+    return None, "本机还没有任何已注册/已建索引的代码库,先 `rootrecall baseline add <仓库路径>`。", known
+
+
+def _graph_missing_msg(target: str, known: dict[str, set[str]]) -> str:
+    """图缺失分支的区分报错:在册没图(重建 index)vs 完全未知(先 baseline add)。"""
+    if known.get(target, set()) - {"graph"}:  # 注册表/索引里有它,只缺图
+        return (f"代码库 '{target}' 已注册/有索引,但结构图未建(data/structgraph/{target}/graph.db 不在;"
+                f"可能建时 --no-graph 或图构建失败)。重建:`uv run rootrecall index <仓库路径> {target}`。")
+    return (f"代码库 '{target}' 的结构图未建。先建:`rootrecall baseline add <仓库路径> --name {target}`。")
+
+
 # ── 工具门控(省上下文):ROOTRECALL_MCP_TOOLS 决定 server 注册哪些工具 ──────────
 #
 # 为什么在「注册」层做、而不是 opencode 的 permission deny:deny 只是"看得见但调不了",
@@ -305,6 +370,9 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
               lessons inside one version (v20 sessions could never recall v25 lessons). Version
               context belongs in summary/evidence; version-line names are for index/retrieval
               tools (search_codebase etc.).
+              The shared ``general`` pool (domain knowledge) is ALWAYS searched alongside your
+              codebase — hits from another pool are prefixed ``[pool]``, and an empty result lists
+              the non-empty scopes so you can fix a wrong codebase in one retry.
         """
         # per-call codebase 覆盖(模板同 blast_radius 的 `codebase or repo`);不传 = 闭包默认 repo。
         active_repo = codebase or repo
@@ -315,15 +383,45 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         # (踩坑#2 变体),也和本 docstring 矛盾,还会用无关 code chunk 稀释记忆信号。
         # 给了 kind → 多取再按 kind 过滤(留余量);否则按 top_k 直取。
         fetch_k = max(top_k * 3, top_k) if kind else top_k
-        hits = await svc.search(query, active_scope, top_k=fetch_k)
+        # 并查 general 池(2026-08-26 实测:领域知识记在 general、项目会话默认作用域各异,
+        # 单池查询「查一个漏一个」——A2DP 一条在 bluez 一条在 general,demo 会话只查到一条)。
+        # active==general 时不重复查;命中按 item_id 去重、按分合排,跨池命中加 [作用域] 前缀。
+        scopes = [active_scope]
+        if active_scope.codebase != "general":
+            scopes.append(Scope(owner="default", codebase="general"))
+        hits: list = []
+        seen: set[str] = set()
+        for s in scopes:
+            for h in await svc.search(query, s, top_k=fetch_k):
+                key = h.item_id or f"{h.summary}@{s.codebase}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                hits.append(h)
+        hits.sort(key=lambda h: h.score, reverse=True)
         if kind:
             hits = [h for h in hits if (h.kind or "") == kind][:top_k]
         if not hits:
+            # 空池提示(2026-08-26 实测:agent 没传 codebase 探到服务器默认空池,连试两轮;
+            # 列出非空作用域让它一次改对)。后端不支持 list_scopes → 静默跳过,不加提示。
+            hint = ""
+            try:
+                avail = await svc.list_scopes()
+            except Exception:  # noqa: BLE001 —— 提示是增强,后端没有这能力就不挡主链路
+                avail = None
+            if avail:
+                hint = "非空作用域:" + "、".join(f"{cb}({n})" for cb, n in avail[:8]) + "。"
             tag = f", kind={kind}" if kind else ""
-            return f"No memory found for '{query}' (codebase={active_repo}{tag})."
+            return (f"No memory found for '{query}' (codebase={active_repo}{tag},已并查 general 池)。{hint}"
+                    f"确认 codebase 传对了吗 —— 项目记忆传项目名(如 bluez),领域知识在 general;"
+                    f"服务器默认作用域常常不是你要的那个池子。")
         tag = f", kind={kind}" if kind else ""
-        out = [f"Recalled {len(hits)} (by relevance, codebase={active_repo}{tag}):"]
-        out += [h.render() for h in hits]
+        out = [f"Recalled {len(hits[:top_k])} (by relevance, codebase={active_repo}{tag},并查 general 池):"]
+        for h in hits[:top_k]:
+            line = h.render()
+            if h.repo and h.repo != active_repo:
+                line = f"[{h.repo}] {line}"  # 跨池命中亮明住在哪(治「查一个漏一个」)
+            out.append(line)
         return "\n".join(out)
 
     # ── ② memory_memorize:写一条记忆(报告/补丁走 workflow 自动记,这是 ad-hoc 入口)──
@@ -394,11 +492,21 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
               scope isolation means a version label locks the lesson inside that version (v25 sessions
               would recall nothing recorded under wpa-v20). Put the version in summary/commit_sha/
               evidence instead; version-line names are for index/retrieval tools.
+              IGNORED for domain_knowledge: domain facts always land in the shared ``general`` pool
+              (auto-redirected) so any session can recall them — project-scoped domain knowledge gets
+              lost in one repo's pool (2026-08-26 field report: A2DP facts split across bluez + general,
+              recall found one or the other, never both).
         """
         from rootrecall.services.memory.schema import Evidence, KnowledgeItem, SourceTier, make_id
 
         # per-call codebase 覆盖(模板同 blast_radius);不传 = 闭包默认 repo/scope。
         active_repo = codebase or repo
+        # 领域知识统一入 general 池(2026-08-26 实测:A2DP 一条记 bluez、一条记 general,同主题
+        # 裂成两池,recall 查一漏一)。这里强制归一,不信任调用方记性;原传值在输出里注明。
+        cb_note = ""
+        if kind == "domain_knowledge" and active_repo != "general":
+            cb_note = f"(domain_knowledge 统一入 general 池,原传 codebase={active_repo} 已改写)"
+            active_repo = "general"
         active_scope = Scope(owner="default", codebase=active_repo)
         blast_radius_files = blast_radius_files or []
         tags = tags or []
@@ -457,7 +565,7 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         n = await svc.memorize([item], active_scope)
         extra = f" corrects={len(corrects)}" if corrects else ""
         url_extra = f" source_url={source_url}" if source_url else ""
-        return f"memorized id={item.id} kind={kind} codebase={active_repo} ({n} merged/added){extra}{url_extra}"
+        return f"memorized id={item.id} kind={kind} codebase={active_repo} ({n} merged/added){extra}{url_extra}{cb_note}"
 
     # ── ②b memory_dump:把记忆库摊开做体检(浏览/审计,区别于 recall 的 query 式检索)──
     # recall 是「按 query 相关性挑几条」(得先知道问啥);memory_dump 是「一次把全量摊开看」——
@@ -535,31 +643,37 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         codebase: override which codebase's index to search (default = this server's codebase).
               Pass when the code you're looking for lives in a different repo than the server's
               default; the index is table-per-repo, so each codebase is searched in isolation.
+              Near-names are fuzzy-resolved against known codebases (list: `rootrecall baseline ls`).
         """
         from rootrecall.services.code_index.retrieval import retrieve
         # per-call codebase 覆盖(模板同 blast_radius);不传 = 闭包默认 repo。
-        active_repo = codebase or repo
+        target, cb_note, known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            return cb_note
         try:
             embedder, store, reranker = _retrieval_bundle()  # 模块级检索单例(embedder/store/reranker)
         except Exception as e:  # noqa: BLE001 —— 依赖没装好给可操作错误串,不抛崩整个 server
             return f"search_codebase 初始化失败(检查 config.code_index / .env): {e}"
 
         try:
-            if store.count(active_repo) == 0:  # 表不存在或为空
-                return (f"代码库 '{active_repo}' 还没建索引(表空)。先建:"
-                        f"`uv run rootrecall index <仓库路径> {active_repo}`。")
+            if store.count(target) == 0:  # 表不存在或为空
+                if known.get(target, set()) - {"index"}:  # 注册表/图里有它,只缺向量索引
+                    return (f"代码库 '{target}' 已注册但向量索引是空的(建索引失败过或被清)。"
+                            f"重建:`uv run rootrecall index <仓库路径> {target}`。")
+                return (f"代码库 '{target}' 还没建索引(表空)。先建:"
+                        f"`uv run rootrecall index <仓库路径> {target}`。")
         except Exception:
-            return (f"代码库 '{active_repo}' 还没建索引。先建:"
-                    f"`uv run rootrecall index <仓库路径> {active_repo}`。")
+            return (f"代码库 '{target}' 还没建索引。先建:"
+                    f"`uv run rootrecall index <仓库路径> {target}`。")
 
         try:
-            result = retrieve(query, active_repo, embedder, store, reranker, top_k=top_k)
+            result = retrieve(query, target, embedder, store, reranker, top_k=top_k)
         except Exception as e:  # noqa: BLE001
             return f"检索失败: {e}"
 
         if not result.hits:
-            return f"未找到与 '{query}' 相关的代码(检索路径 {result.out_mode},codebase={active_repo})。"
-        out = [f"检索路径 {result.out_mode} · top-{len(result.hits)}(均为索引内真实符号,codebase={active_repo})"]
+            return f"{cb_note}未找到与 '{query}' 相关的代码(检索路径 {result.out_mode},codebase={target})。"
+        out = [f"{cb_note}检索路径 {result.out_mode} · top-{len(result.hits)}(均为索引内真实符号,codebase={target})"]
         for h in result.hits:
             first = h.text.splitlines()[0][:120] if h.text.splitlines() else ""
             out.append(f"\n{h.file}:{h.start_line}-{h.end_line}  ({h.kind} {h.symbol})  score={h.score:.3f}\n  {first}")
@@ -574,26 +688,28 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
 
         Pass the file paths a patch/PR modifies. Graph-driven, no LLM. Needs the codebase graph built
         (`uv run rootrecall index <path> <name>`); returns a "not built" hint otherwise.
-        codebase: override which codebase's graph (default = this server's codebase).
+        codebase: override which codebase's graph (default = this server's codebase; near-names
+              fuzzy-resolved, list: `rootrecall baseline ls`).
         """
         try:
             from rootrecall.services.code_index.code_graph import CodeGraph
         except Exception as e:  # noqa: BLE001 —— code-review-graph 未装给可操作提示
             return (f"blast_radius 不可用:结构图后端未装。装它: `uv sync --extra code-review-graph`\n  ({e})")
-        target = codebase or repo
         if not changed_files:
             return "未传 changed_files(传会被改动的文件路径列表)。"
+        target, cb_note, known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            return cb_note
         try:
             cg = CodeGraph.open(target)
             result = cg.impact_radius(list(changed_files))
         except FileNotFoundError:
-            return (f"代码库 '{target}' 的结构图未建(data/structgraph/{target}/graph.db 不在)。"
-                    f"先建:`uv run rootrecall index <仓库路径> {target}`。")
+            return _graph_missing_msg(target, known)
         except Exception as e:  # noqa: BLE001
             return f"算影响面失败({target}): {e}"
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
-        return (f"blast-radius(codebase={target},输入 {len(changed_files)} 文件):\n"
+        return (f"{cb_note}blast-radius(codebase={target},输入 {len(changed_files)} 文件):\n"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要完整波及面:分批传 changed_files(每次几个文件)重调')}")
 
     # ── ⑤b call_chain:符号中心的 N 跳调用链(仅 CALLS 边 + PageRank;P1.5 caller/callee 进适配层)
@@ -617,27 +733,29 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         direction: callers (who calls it) / callees (what it calls) / both (default).
         depth:     hop count (default 2, capped at 5 to bound large graphs).
         top_n:     max nodes per direction after sorting (hop asc, pagerank desc); default 15.
-        codebase:  override which codebase's graph (default = this server's codebase).
+        codebase:  override which codebase's graph (default = this server's codebase; near-names
+              fuzzy-resolved, list: `rootrecall baseline ls`).
         Needs the codebase graph built; returns a "not built" hint otherwise.
         """
         try:
             from rootrecall.services.code_index.code_graph import CodeGraph
         except Exception as e:  # noqa: BLE001 —— code-review-graph 未装给可操作提示
             return (f"call_chain 不可用:结构图后端未装。装它: `uv sync --extra code-review-graph`\n  ({e})")
-        target = codebase or repo
+        target, cb_note, known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            return cb_note
         try:
             cg = CodeGraph.open(target)
             result = cg.call_chain(symbol, direction=direction, depth=depth, top_n=top_n)
         except FileNotFoundError:
-            return (f"代码库 '{target}' 的结构图未建(data/structgraph/{target}/graph.db 不在)。"
-                    f"先建:`uv run rootrecall index <仓库路径> {target}`。")
+            return _graph_missing_msg(target, known)
         except ValueError as e:  # symbol 解析不到 / direction 非法 → 友好串,不抛
             return f"call_chain 没法算({target}, symbol={symbol}): {e}"
         except Exception as e:  # noqa: BLE001
             return f"算调用链失败({target}, symbol={symbol}): {e}"
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
-        return (f"call-chain(codebase={target}, symbol={symbol}, direction={direction}, "
+        return (f"{cb_note}call-chain(codebase={target}, symbol={symbol}, direction={direction}, "
                 f"depth={depth}):\n"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要完整链:减小 top_n/depth 或换 direction(callers/callees 单向)重调')}")
 
@@ -661,14 +779,17 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         repo_path: absolute path to the repo working tree (cwd for git) — or just a registered
         codebase/repo name (resolved via the repo registry / index manifest). concern_files/symbols:
         scope to these (symbols resolved via the graph if available). top_commits: commit cap.
-        codebase: override which codebase's graph is used for enrichment (default = server's).
+        codebase: override which codebase's graph is used for enrichment (default = server's;
+              near-names fuzzy-resolved, list: `rootrecall baseline ls`).
         Needs only the git repo; graph is optional enrichment (runs git core even without it).
         """
         repo_path = _resolve_repo_path_arg(repo_path)
         from rootrecall.services.code_index.code_graph import CodeGraph
         from rootrecall.services.code_index.code_graph import cross_version_diff as _cvd
-        target = codebase or repo
-        # 图可选:开得到就富化,开不到(未建 / CRG 未装)→ None,git 核照跑
+        # 图是可选富化:名字解析失败不挡 git 核 —— 保留原名照跑(开不到图自动降级)。
+        target, cb_note, _known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            target, cb_note = (codebase or repo), ""
         graph = None
         try:
             graph = CodeGraph.open(target)
@@ -683,7 +804,7 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
             return f"跨版本对比失败(repo={repo_path}, {base_ref}..{head_ref}): {e}"
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
-        return (f"cross-version-diff(repo={repo_path}, codebase={target}, "
+        return (f"{cb_note}cross-version-diff(repo={repo_path}, codebase={target}, "
                 f"{base_ref}..{head_ref}):\n"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要完整 diff:传 concern_files/concern_symbols 收窄范围,或减小 top_commits 重调')}")
 
@@ -723,8 +844,10 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         repo_path = _resolve_repo_path_arg(repo_path)
         from rootrecall.services.code_index.code_graph import CodeGraph
         from rootrecall.services.code_index.code_graph import merge_eval as _me
-        target = codebase or repo
-        # 图可选:开得到就富化,开不到(未建 / CRG 未装)→ None,git 核照跑
+        # 图是可选富化:名字解析失败不挡 git 核 —— 保留原名照跑(同 cross_version_diff)。
+        target, cb_note, _known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            target, cb_note = (codebase or repo), ""
         graph = None
         try:
             graph = CodeGraph.open(target)
@@ -742,7 +865,7 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
         s = result.get("summary", {})
-        return (f"merge-eval(repo={repo_path}, fork={fork_ref}, codebase={target}, "
+        return (f"{cb_note}merge-eval(repo={repo_path}, fork={fork_ref}, codebase={target}, "
                 f"{upstream_base_ref}..{upstream_head_ref}): "
                 f"total={s.get('total', 0)} | already_fixed={s.get('already_fixed', 0)} "
                 f"| recommend_merge={s.get('recommend_merge', 0)} | conflict={s.get('conflict', 0)} "
@@ -813,25 +936,27 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         repo_map is the whole-repo importance overview (satellite map). Also distinct from hub_nodes
         (degree-based top-15 flat list) — repo_map is PageRank (centrality) based, larger, and tree-grouped.
         map_tokens: token budget for the map (default 2048).
-        codebase:   override which codebase's graph (default = this server's codebase).
+        codebase:   override which codebase's graph (default = this server's codebase; near-names
+              fuzzy-resolved, list: `rootrecall baseline ls`).
         Needs the codebase graph built; returns a 'not built' hint otherwise.
         """
         try:
             from rootrecall.services.code_index.code_graph import CodeGraph
         except Exception as e:  # noqa: BLE001 —— code-review-graph 未装给可操作提示
             return (f"repo_map 不可用:结构图后端未装。装它: `uv sync --extra code-review-graph`\n  ({e})")
-        target = codebase or repo
+        target, cb_note, known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            return cb_note
         try:
             cg = CodeGraph.open(target)
             result = cg.repo_map(map_tokens=map_tokens)
         except FileNotFoundError:
-            return (f"代码库 '{target}' 的结构图未建(data/structgraph/{target}/graph.db 不在)。"
-                    f"先建:`uv run rootrecall index <仓库路径> {target}`。")
+            return _graph_missing_msg(target, known)
         except Exception as e:  # noqa: BLE001
             return f"算仓库地图失败({target}): {e}"
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
-        return (f"repo-map(codebase={target}, map_tokens={map_tokens}):"
+        return (f"{cb_note}repo-map(codebase={target}, map_tokens={map_tokens}):"
                 f" {result.get('n_symbols', 0)} symbols / {result.get('n_files', 0)} files"
                 f"{' (truncated by budget)' if result.get('truncated') else ''}\n"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要更小的地图:减小 map_tokens 重调(top_symbols 字段已含前 10 名摘要)')}")
@@ -868,14 +993,17 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         top_n:           how many hub_nodes / bridge_nodes to return (default 15 each).
         max_communities: cap on how many communities to include, largest-first (default 30).
                          The header still reports the true total community count.
-        codebase:        override which codebase's graph (default = this server's codebase).
+        codebase:        override which codebase's graph (default = this server's codebase;
+                         near-names fuzzy-resolved, list: `rootrecall baseline ls`).
         Needs the codebase graph built; returns a 'not built' hint otherwise.
         """
         try:
             from rootrecall.services.code_index.code_graph import CodeGraph
         except Exception as e:  # noqa: BLE001 —— code-review-graph 未装给可操作提示
             return (f"repo_overview 不可用:结构图后端未装。装它: `uv sync --extra code-review-graph`\n  ({e})")
-        target = codebase or repo
+        target, cb_note, known = _resolve_active_codebase(codebase or repo)
+        if target is None:
+            return cb_note
         try:
             cg = CodeGraph.open(target)
             arch = cg.architecture_overview()         # {communities, cross_community_edges, warnings}
@@ -884,8 +1012,7 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
             hubs = cg.hub_nodes(top_n=top_n)          # 被依赖最多的核心枢纽
             bridges = cg.bridge_nodes(top_n=top_n)    # 架构瓶颈/咽喉(betweenness 最高)
         except FileNotFoundError:
-            return (f"代码库 '{target}' 的结构图未建(data/structgraph/{target}/graph.db 不在)。"
-                    f"先建:`uv run rootrecall index <仓库路径> {target}`。")
+            return _graph_missing_msg(target, known)
         except Exception as e:  # noqa: BLE001
             return f"算仓库架构总览失败({target}): {e}"
         import json
@@ -940,7 +1067,7 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
             body = body[:LIMIT - len(note)] + note
 
         comm_suffix = f"(本调用含 {len(communities_trimmed)} / 共 {n_total_comm})" if n_total_comm > len(communities_trimmed) else ""
-        return (f"repo-overview(codebase={target}, top_n={top_n}):"
+        return (f"{cb_note}repo-overview(codebase={target}, top_n={top_n}):"
                 f" {n_total_comm} communities{(' ' + comm_suffix) if comm_suffix else ''}"
                 f" / {len(hubs)} hubs / {len(bridges)} bridges"
                 f"{f' / {len(warnings)} 高耦合告警' if warnings else ''}\n{body}")
@@ -1062,20 +1189,26 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
     # 要含 memorize 返回的 id(证明教训已沉淀),才算完整闭环。
     @_tool("export_report")
     async def export_report(content: str, repo_path: str, out_dir: str = "data/bug_rca",
-                            agents_md: bool = False) -> str:
+                            agents_md: bool = False, topic: str | None = None) -> str:
         """Finalize your analysis report as an on-disk .md file — USER-TRIGGERED deliverable (same
         bar as the patch; call it when the user asks for the report, typically after user-confirmed
         real-machine verification — do NOT auto-write it mid-iteration).
 
-        Writes your markdown report to ``<out_dir>/<repo-name>-rca.md`` and REFUSES empty/trivial
-        content — catches "forgot to write a report / passed a placeholder". Write the patch first
-        (``export_patch``, step ⑦) AND memorize the lesson (``memorize``, step ⑧) first, then write
-        this report so it can cite the on-disk ``.patch`` path and the returned memorize id.
+        Writes your markdown report to ``<out_dir>/<repo-name>[-<topic>]-rca.md`` and REFUSES
+        empty/trivial content — catches "forgot to write a report / passed a placeholder". Write
+        the patch first (``export_patch``, step ⑦) AND memorize the lesson (``memorize``, step ⑧)
+        first, then write this report so it can cite the on-disk ``.patch`` path and the returned
+        memorize id.
 
         content:   the full markdown report (root cause + evidence + patch summary + validate result +
                    patch path + memorize id).
         repo_path: absolute path of the repo (used only to derive the report filename).
         out_dir:   output directory (default ``data/bug_rca``; created if missing).
+        topic:     short slug distinguishing THIS report's topic (e.g. ``connect-flow-compare``,
+                   ``a2dp-protocol``, ``bug-1234``) — one repo usually produces MULTIPLE reports
+                   (compare / domain-research / different bugs) and the bare ``<repo>-rca.md``
+                   name made them overwrite each other (2026-08-26 field report: an A2DP report
+                   silently replaced a connection-flow compare report). Omit = legacy filename.
         agents_md: ALSO write an AGENTS.md next to the report (``<repo_path>/AGENTS.md`` — INTO the
                    repo root). AGENTS.md is the agent-facing README convention (agents.md; opencode /
                    claude code / cursor read it natively) — onboarding/research findings become context
@@ -1086,6 +1219,7 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
                    verbose AGENTS.md slows agents down) — a distilled digest, not a copy: ≤60 lines,
                    no evidence tables / no per-step narration / no report-only sections.
         """
+        import re
         from pathlib import Path
 
         if not content or not content.strip():
@@ -1095,15 +1229,24 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         # 空路径兜底 "report",绝不因 repo_path 小瑕疵挡住报告上盘(交付物宁可落盘)。
         name = Path(repo_path).name if repo_path and repo_path.strip() else ""
         repo_name = name or "report"
+        # 主题后缀(2026-08-26 实测:固定 <repo>-rca.md 让同仓多主题报告互相覆盖)。topic 缺省
+        # 保持旧名(向后兼容);给了就 <repo>-<topic>-rca.md,空白/斜杠归一成连字符、截 48 字符。
+        slug = ""
+        if topic and topic.strip():
+            slug = re.sub(r"[\s/\\]+", "-", topic.strip()).strip("-")[:48]
+        fname = f"{repo_name}-{slug}-rca.md" if slug else f"{repo_name}-rca.md"
         from rootrecall.services.repos.registry import reanchor_data_path
 
         out = reanchor_data_path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
-        report_path = out / f"{repo_name}-rca.md"
+        report_path = out / fname
+        existed = report_path.exists()
         report_path.write_text(content, encoding="utf-8")
         archived = _archive_bug_copy(report_path, repo_path)
         n = len(content.splitlines())
         msg = f"✅ 已落盘\npath={report_path}\nlines={n}  (markdown 报告)"
+        if existed:
+            msg += "\n⚠️ 已覆盖同名文件(同主题重跑属正常幂等;这是不同主题的报告就传 topic 区分文件名)"
         if archived:
             msg += f"\n归档:{archived}(按 bug_id,gc 回收仓后仍可追溯)"
         # AGENTS.md 产出(#5,2026-08-17):报告同源数据蒸馏成「给 agent 看的 README」写进仓根。
