@@ -75,3 +75,7 @@ oh-my-pi/
 
 # recall validation experiment (backlog #59)
 data/exp/
+
+# 内部踩坑文档(2026-08-26 用户定:仅本机,不入库)
+docs/踩坑记录.md
+docs/测试踩坑记录.md

@@ -12,7 +12,7 @@
 
 三者共享一个**平台 + 共享服务层**(代码理解、记忆、沙箱、检索、可观测),解决三大痛点:① 记忆跨会话;② 省 token(精炼 MCP 工具 + just-in-time 上下文,agent 按需取、不预塞全量);③ 流水线(一条命令跑完 / 一套 skill+工具复用)。Tagline:*Light on every root cause.*
 
-> v2(2026-07-28)产品重规划:从 v0.1"先建深地基再接场景"改为"编排 + 记忆 + 委托"。已建的 code_index(P1.0–P1.5)作为资产保留。v2 全套设计文档(architecture / memory / bug-rca / deep-research)在本机只读归档 `docs-bak/设计/`(未随 git);**随 git 的现状文档**是 docs/ 三篇模块分析(bug 定位 / 代码调研 / 记忆)+ [踩坑记录](docs/踩坑记录.md)。
+> v2(2026-07-28)产品重规划:从 v0.1"先建深地基再接场景"改为"编排 + 记忆 + 委托"。已建的 code_index(P1.0–P1.5)作为资产保留。v2 全套设计文档(architecture / memory / bug-rca / deep-research)在本机只读归档 `docs-bak/设计/`(未随 git);**随 git 的现状文档**是 docs/ 三篇模块分析(bug 定位 / 代码调研 / 记忆)。踩坑记录(`docs/踩坑记录.md` 开发/设计类 + `docs/测试踩坑记录.md` 测试过程类)2026-08-26 起也只留本机、不随 git。
 
 ## ⭐ 工作准则(必读)
 
@@ -40,7 +40,7 @@ RootRecall/
 │   ├── tools/        # ✅ MCP 工具(mcp_memory,17 个给 coding agent)+ delegate(R2,降级参考)
 │   └── cli.py        # ✅ 入口(models/index/lsp/memory/mcp/bug-rca/research/patch-report)
 ├── config/           # config.yaml(模型/沙箱/记忆/委托)+ opencode_rootrecall.json(opencode agent+MCP)
-├── docs/             # 模块分析×3 + 参考×4(mcp-tools/configuration/cli/mcp-guide)+ skill-routing-matrix + 踩坑记录(面试版)
+├── docs/             # 模块分析×3 + 参考×4(mcp-tools/configuration/cli/mcp-guide)+ skill-routing-matrix(踩坑记录×2 仅本机,不入库)
 ├── example/          # demo1/demo2 金标准(输入 wpa + 日志/漏洞 → 补丁 + 报告)
 ├── scripts/          # setup.sh(系统工具) / setup_claude.sh(记忆软链)
 ├── .claude/memory/   # Claude Code 项目记忆(随 git 跨机)
