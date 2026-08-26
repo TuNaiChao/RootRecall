@@ -52,7 +52,7 @@ allowed-tools:
 | `read` / `grep` / `glob` | step 4 读函数体(仅重跑路径) | **核心**:step 4 逐节点走旅程全靠 read 函数体。**短路路径不用** |
 | `rootrecall_memory_recall(query, codebase?)` | **step 1 第一步** | 命中同主题导览事实 → **短路直接出报告**(step 5/6),不重跑;这才是「秒答」。没命中才走完整调研 |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=codebase_fact,kind_detail=architecture,带 file:line evidence;**codebase 传项目名(如 bluez),不是索引名**——版本进 evidence/tags;**不需用户验证**。**短路路径不 memorize**(DB 已有) |
-| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘 | 写导览报告 .md;topic 必传防同仓多主题覆盖;落完把绝对路径报给用户(默认落点在 RootRecall 数据目录,不在会话目录) |
+| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘 | 写导览报告 .md;topic 必传防同仓多主题覆盖;落完再调一次 export_report 传 `out_dir=<你会话的工作目录>`(同内容同 topic)放副本,两个绝对路径都报给用户(本 skill 无 bash) |
 | `rootrecall_ensure_repo(name)` | 本地没仓 | 只读 clone |
 
 ## 硬约束

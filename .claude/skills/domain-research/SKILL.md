@@ -63,7 +63,7 @@ allowed-tools:
 | `rootrecall_find_repo(project)` | step 3 找本地基线 | 源码交叉验证前先查注册表拿路径(别 bash 瞎找) |
 | `read` / `grep` / `glob` | step 3 第三重交叉验证(可选) | 网调查到的协议行为,本地有源码时去核实(如查到"X→Y",grep 源码确有此调用) |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=domain_knowledge,kind_detail=domain,带 source_url(网调)/不带(笔记);**不需用户验证**。**短路路径不 memorize** |
-| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘(可选) | 写调研报告 .md;topic 必传防同仓多主题覆盖;每条结论附 source URL;落完把绝对路径报给用户(默认落点在 RootRecall 数据目录,不在会话目录);每条结论附 source URL |
+| `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘(可选) | 写调研报告 .md;topic 必传防同仓多主题覆盖;每条结论附 source URL;落完再调一次 export_report 传 out_dir=<你会话的工作目录>(同内容同 topic)放副本,两个绝对路径都报给用户(本 skill 无 bash);每条结论附 source URL |
 
 ## 硬约束
 
