@@ -4,6 +4,7 @@ description: 上网调研领域/项目知识(协议语义、各层职责、技�
 allowed-tools:
   - websearch
   - webfetch
+  - rootrecall_find_repo
   - rootrecall_memory_recall
   - rootrecall_memory_memorize
   - rootrecall_export_report
@@ -42,7 +43,7 @@ allowed-tools:
 2. **短路 vs 重跑(关键分流)**:看 step 1 的 recall 结果 ——
    - **短路(直接出卡)**:recall 命中了**同一个 codebase + 同一个领域主题**的事实,内容已包含核心结论 + source 溯源。→ 复用它,跳到 step 5 出知识卡 + step 6 export_report,**不重跑网调**。用户要的「秒答」就是这条路径。
    - **重跑(走完整 step 3-4)**:recall 没命中、或主题对不上(问的是 L2CAP,记忆里只有 GATT)、或缺关键点。→ 走下面 step 3-4 的完整网调。**这才是该花网调预算的时候**。
-3. **多源网调【核心】**(仅重跑路径):`websearch(<主题 + 权威词,如 "L2CAP specification" / "RFC 4.2">)` 撒网找候选源 → 挑**权威源**(官方 spec > RFC > 手册 > 博客)→ `webfetch(<权威源 URL>)` 精读。**每条结论至少 2 个独立源印证**:第一个源给结论,第二个源核实(尤其冲突/易错点,如协议版本差异)。记下每个源的 URL(主源进 `source_url`,辅源进报告)。本地有相关源码时可 `grep`/`read` 作第三重交叉验证(如查到协议说"X 函数触发 Y",去源码核实确有此调用)。
+3. **多源网调【核心】**(仅重跑路径):`websearch(<主题 + 权威词,如 "L2CAP specification" / "RFC 4.2">)` 撒网找候选源 → 挑**权威源**(官方 spec > RFC > 手册 > 博客)→ `webfetch(<权威源 URL>)` 精读。**每条结论至少 2 个独立源印证**:第一个源给结论,第二个源核实(尤其冲突/易错点,如协议版本差异)。记下每个源的 URL(主源进 `source_url`,辅源进报告)。本地有相关源码时可 `grep`/`read` 作第三重交叉验证(如查到协议说"X 函数触发 Y",去源码核实确有此调用)。**找本地源码用 `find_repo(project=<项目名>)`**(注册表里有基线 checkout,一步拿到路径)—— 别 bash 目录树瞎找(实测教训 2026-08-26:agent 在 Desktop 下 ls 不到 codebases 根就断言"本地无源码",第三重验证降级成看 GitHub 页面,而锚点就在本地盘上)。
 4. **聚领域级结论**(仅重跑路径):把多源查到的零散点聚成**领域级解读** —— 这个协议/机制是干啥的(一句话职责)+ 核心状态机/流程(分几步、每步做啥)+ 关键约束/边界条件(什么情况触发、什么情况报错)+ 和相邻协议/层的关系。不要只罗列查到的片段,要讲清"为什么这么设计 / 这层在整个系统里的位置"。
 5. **聚知识卡【短路路径也走这】**:把(重跑得出的、或 recall 命中直接复用的)结论写成知识卡(见下面格式)。每条结论附 **source URL**(网调)或**用户提供的依据**(笔记)。
 6. **落调研报告**:`export_report(topic=<主题 slug,如 a2dp-protocol>)` 落盘 .md(可选,用户要报告时落;纯记笔记可跳)。**必传 topic** —— 同仓多主题报告不传会互相覆盖(实测:A2DP 报告盖掉连接流程对比报告)。每条结论附 source URL,对齐防幻觉。
@@ -59,6 +60,7 @@ allowed-tools:
 | `rootrecall_memory_recall(query, codebase?)` | **step 1 第一步** | 命中同主题领域知识 → **短路直接出知识卡**(step 5/6),不重跑网调;这才是「秒答」。没命中才走完整调研 |
 | `websearch(query)` | step 3 撒网找源(仅重跑路径) | 传**主题 + 权威词**(协议名 + spec/RFC/standard);挑权威源 |
 | `webfetch(url)` | step 3 精读权威源(仅重跑路径) | 读官方 spec/RFC/手册正文;记 URL 做溯源 |
+| `rootrecall_find_repo(project)` | step 3 找本地基线 | 源码交叉验证前先查注册表拿路径(别 bash 瞎找) |
 | `read` / `grep` / `glob` | step 3 第三重交叉验证(可选) | 网调查到的协议行为,本地有源码时去核实(如查到"X→Y",grep 源码确有此调用) |
 | `rootrecall_memory_memorize(...)` | step 7(仅重跑路径才记) | kind=domain_knowledge,kind_detail=domain,带 source_url(网调)/不带(笔记);**不需用户验证**。**短路路径不 memorize** |
 | `rootrecall_export_report(content, repo_path, topic=<主题slug>)` | step 6 落盘(可选) | 写调研报告 .md;topic 必传防同仓多主题覆盖;每条结论附 source URL |

@@ -14,6 +14,7 @@ allowed-tools:
   - rootrecall_ensure_repo
   - rootrecall_find_repo
   - read
+  - edit
   - grep
   - glob
   - bash

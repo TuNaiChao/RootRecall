@@ -2,6 +2,7 @@
 name: bug-rca
 description: 在 C/系统软件仓库(Linux 内核、BlueZ、wpa_supplicant、systemd、dbus、网络栈)定位 bug 根因并修复。用户让你查 bug/崩溃/挂起/回归/CVE 的根因、问"为什么 X 会断/泄漏/死锁"、或修这类 bug 时用。你负责推理和改代码;RootRecall 工具提供记忆、代码检索、影响面、补丁 apply 校验、补丁/报告落盘(日志用你自己的 grep/awk 切)。补丁只有在干净 apply 且经人/真机验证后才算正确——在此之前持续迭代。
 allowed-tools:
+  - rootrecall_find_repo
   - rootrecall_memory_recall
   - rootrecall_search_codebase
   - rootrecall_blast_radius
