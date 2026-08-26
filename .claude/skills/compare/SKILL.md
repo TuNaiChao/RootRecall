@@ -2,6 +2,7 @@
 name: compare
 description: 对比两个版本/两个仓库的某个流程或模块有什么差异——锚定两版各自的流程入口函数,逐节点读函数体语义对照,聚成流程级差异报告。用户问"v20、v25 蓝牙在连接流程上有什么差异"、"这两个版本的 X 功能实现有什么不同"、"新版本改了哪条流程"时用。
 allowed-tools:
+  - rootrecall_find_repo
   - rootrecall_search_codebase
   - rootrecall_repo_map
   - rootrecall_call_chain
@@ -28,7 +29,7 @@ allowed-tools:
 
 > **先 recall,命中就短路**。这个 skill 的价值一半在「记忆让下次秒答」—— 所以**第一步永远是 `memory_recall`**(`codebase` 传项目名查一次这个流程主题的对比 —— 记忆按项目记、跨版本共享)。若召回的历史对比事实**已覆盖用户问的主题 + file:line 双源齐全**,**直接复用它出对比卡(下面步骤 5/6),不要重跑 search/read**;只有没命中、或命中但主题对不上/缺关键节点时,才走完整的 A→B→C 调研。判据见 step 2 的「短路 vs 重跑」。
 
-1. **确认两版 + 流程主题 + recall 探底**:问清两个 codebase 各代表哪版(如 `bluez` = v25 新版、`bluez_v20` = v20 旧版)+ 用户关心的**流程主题**(「连接流程」/「配对流程」/「SDP 服务发现」/「GATT 发现」...)。本地没仓 → `ensure_repo`(只读 clone)。**第一步立刻 `memory_recall(query=<流程主题>, codebase=<项目名>)` 查一次**,看有没有历史对比事实(记忆按项目名记、跨版本共享;**别**用两版索引名各查 —— 索引名是检索类工具用的,记忆 scope 里没有,会白查)。**先把主题词想成一个代码概念**(「连接流程」→ connection establishment / connect / pair / link),检索用概念不用文件名。
+1. **确认两版 + 流程主题 + recall 探底**:问清两个 codebase 各代表哪版(如 `bluez` = v25 新版、`bluez_v20` = v20 旧版)+ 用户关心的**流程主题**(「连接流程」/「配对流程」/「SDP 服务发现」/「GATT 发现」...)。**不知道本地有哪些仓/注册名叫什么 → `rootrecall_find_repo(project=<项目>)` 一次拿全(候选名直接可用),别 bash 查注册表绕**(实测绕 3 次才找到)。本地没仓 → `ensure_repo`(只读 clone)。**第一步立刻 `memory_recall(query=<流程主题>, codebase=<项目名>)` 查一次**,看有没有历史对比事实(记忆按项目名记、跨版本共享;**别**用两版索引名各查 —— 索引名是检索类工具用的,记忆 scope 里没有,会白查)。**先把主题词想成一个代码概念**(「连接流程」→ connection establishment / connect / pair / link),检索用概念不用文件名。
 
    > **⚠ 仓库路径**:工具(`search_codebase`/`repo_map`/`call_chain`)返回的 file:line 是索引时的**相对路径**(带 repo_root 前缀,如 `code-test/v25/bluez/src/...`)。你要 `read` 函数体时,若相对路径在你的 cwd 下打不开(常见:仓库目录被 gitignore → `glob` 看不见;或 cwd 不是项目根),按序试:**① 索引名直接当 repo_path 用** —— `repo_path` 参数现已吃注册名(注册表/索引清单自动反查,见 `rootrecall repo ls`);② `ensure_repo(<索引名>)` 拿绝对路径;③ 都不行才问用户。**别浪费步数满盘 glob/find**(本 skill 无 bash 权限,find 也用不了)。拿到绝对路径前缀后,把索引返回的相对路径拼成绝对路径再 `read`。
 2. **短路 vs 重跑(关键分流)**:看 step 1 的 recall 结果 ——
@@ -44,6 +45,7 @@ allowed-tools:
 
 | 工具 | 何时调 | 要点 |
 |---|---|---|
+| `rootrecall_find_repo(project)` | step 1 不知道本地有哪些仓/注册名 | 一次拿全候选(名字直接可用);别 bash 查注册表绕 |
 | `rootrecall_search_codebase(query, codebase?)` | step 2 锚定入口 | 传**概念**别传文件名(如"蓝牙连接建立流程");两 codebase 各跑一次;只回真实符号 |
 | `rootrecall_repo_map(codebase?)` | step 2 俯瞰两版骨架 | Aider repomap 式 PageRank 符号地图,找流程入口模块;两 codebase 各跑一次 |
 | `rootrecall_call_chain(symbol, codebase?)` | step 2 流程展开 | 从入口种子多跳展开,看流程涉及的函数链;两 codebase 各跑 |

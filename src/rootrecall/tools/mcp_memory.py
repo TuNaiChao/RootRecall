@@ -306,6 +306,24 @@ def _honest_truncate(body: str, limit: int, *, how_to_refetch: str) -> str:
     return body[: limit - len(note)] + note
 
 
+_PLACEHOLDER_MARKERS = ("TBD", "待补", "占位", "待填", "placeholder", "内容回头补", "coming soon")
+
+
+def _placeholder_reason(content: str) -> str | None:
+    """占位报告判定(T24,2026-08-26 实测:空串拒了,TBD 模板照样落盘):返回拒写理由,
+    None = 不像占位。两条判据:① 有效内容过短(<200 字符,真报告必有根因/证据/patch 路径/
+    memorize id,撑得起这个量);② 占位标记行密度 ≥0.4(真报告偶引一句上游代码的 TODO 不
+    误伤 —— TODO 故意不在标记表里,正是为了这个)。"""
+    text = content.strip()
+    if len(text) < 200:
+        return f"有效内容仅 {len(text)} 字符(过短)"
+    lines = [ln for ln in (raw.strip() for raw in text.splitlines()) if ln]
+    hits = sum(1 for ln in lines if any(m in ln.lower() for m in _PLACEHOLDER_MARKERS))
+    if lines and hits / len(lines) >= 0.4:
+        return f"{hits}/{len(lines)} 行含占位标记(TBD/待补/占位等)"
+    return None
+
+
 def _retrieval_bundle():
     """懒构造 (embedder, store, reranker)——code_index 检索三件套(search_codebase 用)。
 
@@ -1337,6 +1355,14 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         if not content or not content.strip():
             return ("❌ 空报告:没传内容(或只传空白)。报告跟补丁一样是交付物 —— 写好根因/证据/补丁要点/"
                     "validate 结果/patch 路径/memorize id 再调。export_report 不写空报告。")
+        # 占位拦截(T24,2026-08-26 实测:「先落盘占位、内容回头补」的 TBD 模板非空、旧守卫
+        # 拦不住,真落了盘):过短或占位标记密度高 → 拒。用户急着要「先有个文件」也不行 ——
+        # 占位报告混进 data/bug_rca 会污染后续 ingest/归档。
+        ph = _placeholder_reason(content)
+        if ph:
+            return (f"❌ 疑似占位报告({ph}):报告是交付物,要根因/证据/补丁要点/validate 结果/"
+                    f"patch 路径/memorize id 的实质内容。「先落盘占位、内容回头补」不是报告 ——"
+                    f"分析完成后再来调。")
         # 报告落盘不强依赖 git / repo 目录存在(内容自包含),只取 repo_path 的目录名做文件名;
         # 空路径兜底 "report",绝不因 repo_path 小瑕疵挡住报告上盘(交付物宁可落盘)。
         name = Path(repo_path).name if repo_path and repo_path.strip() else ""

@@ -495,6 +495,18 @@ def test_export_patch_excludes_quilt_pc(tmp_path):
     assert ".pc/" not in content, "quilt 构建产物混进了补丁"
 
 
+
+# 真报告夹具(T24 占位守卫后,过短内容会被拒 —— 夹具按真报告体量写:根因/证据/patch/memorize id)
+_REAL_REPORT = (
+    "# RCA:radio work 泵泄漏\n\n"
+    "## 根因\nabort 失败分支提前 return,没有释放 p2p_scan_work(wpa_supplicant.c:2214)。\n\n"
+    "## 证据\n- 日志窗口 12:03:41-12:03:52,radio_work 挂起后无 release 跟随。\n"
+    "- 代码:abort 路径缺 work = radio_work_cancel(...) 配对(src/p2p.c:980)。\n\n"
+    "## 补丁\nabort 分支补 radio_work_cancel + 注释说明配对义务。\n"
+    "patch: data/bug_rca/myrepo.patch(apply strict 通过)\n"
+    "memorize id=abc123(apply_only,置信 0.5)\n"
+)
+
 # ════════════════════════ export_report 工具 ════════════════════════
 
 def test_export_report_empty(tmp_path):
@@ -511,8 +523,7 @@ def test_export_report_writes_file(tmp_path):
     """有内容 → 写 <out_dir>/<repo-name>-rca.md(内容逐字一致;repo 目录不存在也能取名)。"""
     repo = tmp_path / "myrepo"  # 故意不 mkdir:export_report 不依赖 repo 目录存在,只取目录名
     out_dir = tmp_path / "out"
-    report_md = ("# 根因\n\nradio work 泄漏:abort 失败分支不释放 p2p_scan_work。\n\n"
-                 "patch: data/bug_rca/myrepo.patch\nmemorize id=abc")
+    report_md = _REAL_REPORT
     mcp = build_server()
     out = _call(mcp, "export_report",
                 {"content": report_md, "repo_path": str(repo),
@@ -531,21 +542,21 @@ def test_export_report_topic_filename(tmp_path):
     out_dir = tmp_path / "out"
     mcp = build_server()
     # ① 两个主题 → 两个文件,互不覆盖
-    _call(mcp, "export_report", {"content": "# 对比\n", "repo_path": str(repo),
+    _call(mcp, "export_report", {"content": _REAL_REPORT, "repo_path": str(repo),
                                  "out_dir": str(out_dir), "topic": "connect-flow-compare"})
-    out2 = _call(mcp, "export_report", {"content": "# A2DP\n", "repo_path": str(repo),
+    out2 = _call(mcp, "export_report", {"content": _REAL_REPORT.replace("radio work 泵泄漏", "A2DP 协商超时"), "repo_path": str(repo),
                                         "out_dir": str(out_dir), "topic": "a2dp protocol"})
     assert (out_dir / "myrepo-connect-flow-compare-rca.md").is_file()
     # topic 里的空白归一成连字符
     assert (out_dir / "myrepo-a2dp-protocol-rca.md").is_file(), out2
-    assert (out_dir / "myrepo-connect-flow-compare-rca.md").read_text(encoding="utf-8") == "# 对比\n"
+    assert (out_dir / "myrepo-connect-flow-compare-rca.md").read_text(encoding="utf-8") == _REAL_REPORT
     # ② 同 topic 重跑 → 覆盖 + 注明(幂等,正常)
-    out3 = _call(mcp, "export_report", {"content": "# 对比 v2\n", "repo_path": str(repo),
+    out3 = _call(mcp, "export_report", {"content": _REAL_REPORT + "v2\n", "repo_path": str(repo),
                                         "out_dir": str(out_dir), "topic": "connect-flow-compare"})
     assert "已覆盖同名文件" in out3, out3
-    assert (out_dir / "myrepo-connect-flow-compare-rca.md").read_text(encoding="utf-8") == "# 对比 v2\n"
+    assert (out_dir / "myrepo-connect-flow-compare-rca.md").read_text(encoding="utf-8") == _REAL_REPORT + "v2\n"
     # ③ 不传 topic → 旧命名(向后兼容)
-    out4 = _call(mcp, "export_report", {"content": "# 旧式\n", "repo_path": str(repo),
+    out4 = _call(mcp, "export_report", {"content": _REAL_REPORT, "repo_path": str(repo),
                                         "out_dir": str(out_dir)})
     assert "myrepo-rca.md" in out4, out4
     assert (out_dir / "myrepo-rca.md").is_file()
@@ -560,7 +571,14 @@ def test_export_report_agents_md_opt_in(tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     out_dir = tmp_path / "out"
-    report_md = "# 导览\n\n模块 A 是核心入口。\n"
+    report_md = (
+        "# 导览\n\n"
+        "模块 A 是核心入口(_ADAPTER_INIT@src/a.c:120),模块 B 依赖它做状态派发;\n"
+        "bridge 节点是 _DISPATCH@src/b.c:88,高耦合告警:A-B 共 14 边。\n"
+        "主旅程:入口 -> 派发 -> 释放,共三步,每步都带 file:line 证据与错误处理约定说明,\n"
+        "命名约定(btd_ 前缀)、日志风格、已知坑位为读码时顺手记录。\n"
+        "新人先读 src/a.c 再读 src/b.c,最后走一遍主旅程断点。\n"
+    )
     mcp = build_server()
     # ① 默认关:不写 AGENTS.md
     out = _call(mcp, "export_report",
@@ -582,6 +600,58 @@ def test_export_report_agents_md_opt_in(tmp_path):
                  {"content": report_md, "repo_path": str(repo),
                   "out_dir": str(out_dir), "agents_md": True})
     assert "未写" in out3 and "已存在" in out3, out3
+
+
+def test_export_report_refuses_placeholder(tmp_path):
+    """T24:占位报告拒写 —— 空串守卫拦不住的 TBD 模板(2026-08-26 实测:772 字节占位真落了盘)。
+
+    判据:占位标记行密度 ≥0.4(TBD/待补/占位等)或有效内容 <200 字符。拒写后磁盘无文件。
+    """
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    out_dir = tmp_path / "out"
+    placeholder = (
+        "# 对比占位报告:蓝牙断开流程(placeholder)\n\n"
+        "> 状态:占位文件,内容待补 —— 本文件仅为落盘占位,分析尚未开始。\n\n"
+        "## 对比主题\n蓝牙断开流程\n\n"
+        "## 入口函数(待补)\n- v25: TBD ↔ v20: TBD\n\n"
+        "## 流程节点差异(待补)\n| 节点 | v25 | v20 |\n|---|---|---|\n"
+        "| 断开入口 | TBD | TBD |\n| 状态转换 | TBD | TBD |\n\n"
+        "## 结论(待补)\n\n## sources(待补)\n- v25: TBD\n- v20: TBD\n"
+    )
+    mcp = build_server()
+    out = _call(mcp, "export_report", {"content": placeholder, "repo_path": str(repo),
+                                       "out_dir": str(out_dir), "topic": "disconnect-compare"})
+    assert "疑似占位报告" in out, out
+    assert "占位标记" in out, out
+    assert not (out_dir / "myrepo-disconnect-compare-rca.md").exists(), "占位文件不该落盘"
+
+
+def test_export_report_refuses_too_short(tmp_path):
+    """T24 短内容分支:非空但 <200 字符 → 拒(真报告必有根因/证据/patch/memorize id)。"""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    out_dir = tmp_path / "out"
+    mcp = build_server()
+    out = _call(mcp, "export_report", {"content": "# 分析\n\n是 A 的锅。\n", "repo_path": str(repo),
+                                       "out_dir": str(out_dir)})
+    assert "疑似占位报告" in out and "过短" in out, out
+    assert not (out_dir / "myrepo-rca.md").exists()
+
+
+def test_export_report_real_report_with_todo_quote_passes(tmp_path):
+    """T24 误伤守护:真报告里偶引一句上游代码的 TODO 注释 → 不拒(标记表故意不含 TODO)。"""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    out_dir = tmp_path / "out"
+    report = _REAL_REPORT + (
+        "\n## 备注\n上游在这段留了 `/* TODO: unify with radio_work_add */` 注释,\n"
+        "与本次修复无冲突,不顺手重构。\n"
+    )
+    mcp = build_server()
+    out = _call(mcp, "export_report", {"content": report, "repo_path": str(repo),
+                                       "out_dir": str(out_dir), "topic": "todo-quote"})
+    assert "已落盘" in out, out
 
 
 # ════════════════════════ memory_recall kind 过滤(patch_search 已并入 recall)════════════════════════
