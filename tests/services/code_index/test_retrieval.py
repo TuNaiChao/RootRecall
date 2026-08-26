@@ -41,6 +41,8 @@ def test_testinfra_prior_buckets():
     assert _testinfra_prior("unit/test_foo.c") == _PRIOR_TESTINFRA         # test 目录段
     assert _testinfra_prior("src/mgmt-tester.c") == _PRIOR_TESTINFRA       # -tester 文件名
     assert _testinfra_prior("src/android_test.c") == _PRIOR_TESTINFRA      # _test 文件名
+    assert _testinfra_prior("src/shared/tester.c") == _PRIOR_TESTINFRA     # 裸 tester.c(远端复测残留)
+    assert _testinfra_prior("ell/test.c") == _PRIOR_TESTINFRA              # 裸 test.c
     assert _testinfra_prior("") == 1.0                                     # 空路径不降
     assert _testinfra_prior("src/device.c") == 1.0                         # 产品代码不降
     assert _testinfra_prior("android/gatt.c") == 1.0                       # 真构建变体不降(交给 rerank)

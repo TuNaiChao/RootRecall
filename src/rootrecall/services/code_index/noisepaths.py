@@ -45,6 +45,12 @@ def is_testinfra_path(path: str) -> bool:
         if seg in TEST_SEGMENTS:
             return True
     stem = parts[-1].rsplit(".", 1)[0]
+    # 裸 endswith("test") 会误伤 latest/greatest 这类正常单词(2026-08-26 自家反例测试抓的),
+    # 只认两类显式形态:分隔符后缀(-test/_test/-tester/…);以及**文件主干就叫**
+    # test/tester 的(远端复测残留:bluez 的 src/shared/tester.c、ell/tester.c 是测试辅助库,
+    # 产品代码不会给自己的核心文件起名叫 tester.c)。
+    if stem in ("test", "tests", "tester", "mock", "stub"):
+        return True
     return any(stem.endswith(s) for s in ("-test", "_test", "-tester", "_tester", "-mock", "_mock"))
 
 
