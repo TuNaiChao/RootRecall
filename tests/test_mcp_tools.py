@@ -150,8 +150,9 @@ def test_repo_map_success_via_fake_graph(monkeypatch):
     seen: dict = {}
 
     class _FakeGraph:
-        def repo_map(self, *, map_tokens: int = 2048):  # noqa: ANN002
+        def repo_map(self, *, map_tokens: int = 2048, exclude_tests: bool = True):  # noqa: ANN002
             seen["map_tokens"] = map_tokens
+            seen["exclude_tests"] = exclude_tests
             return {"repo": "fake", "map_text": "f.c\n└── main (function) L1 pr=0.500",
                     "n_symbols": 1, "n_files": 1, "map_tokens_budget": map_tokens,
                     "map_tokens_used": 8, "truncated": False,
@@ -190,7 +191,7 @@ def test_repo_map_truncation_note_via_fake_graph(monkeypatch):
     import rootrecall.services.code_index.code_graph as cg_mod
 
     class _BigGraph:
-        def repo_map(self, *, map_tokens: int = 2048):  # noqa: ANN002
+        def repo_map(self, *, map_tokens: int = 2048, exclude_tests: bool = True):  # noqa: ANN002
             return {"repo": "fake", "map_text": "x" * 9000,
                     "n_symbols": 900, "n_files": 9, "map_tokens_budget": map_tokens,
                     "map_tokens_used": 9000, "truncated": True,
@@ -206,6 +207,39 @@ def test_repo_map_truncation_note_via_fake_graph(monkeypatch):
     assert "[截断" in out and "减小 map_tokens" in out, out  # note:截断事实 + 补取路径
     # 总长被钳在限内(header 一行 + body 8000)
     assert len(out) <= 8000 + 200, len(out)
+
+def test_repo_map_compact_and_exclude_passthrough(monkeypatch):
+    """compact=True:只出 header + map_text 树 + top-10 名单(不吐全量 JSON);exclude_tests 透传到图。
+
+    P2(2026-08-26 实测):大仓 repo_map 全量 JSON 8000+ 字符密度低 —— map_text 本身就是
+    紧凑形态;exclude_tests 治 *-tester/生成文件霸榜(mgmt-tester 474 入边、ltmain.sh 度 1475)。
+    """
+    import rootrecall.services.code_index.code_graph as cg_mod
+
+    seen: dict = {}
+
+    class _FakeGraph:
+        def repo_map(self, *, map_tokens: int = 2048, exclude_tests: bool = True):  # noqa: ANN001
+            seen["map_tokens"] = map_tokens
+            seen["exclude_tests"] = exclude_tests
+            return {"repo": "fake", "map_text": "src/core.c\n└── core_entry (function) L10 pr=0.500",
+                    "n_symbols": 12, "n_files": 3, "map_tokens_budget": map_tokens,
+                    "map_tokens_used": 40, "truncated": False,
+                    "top_symbols": [{"qualified_name": "src/core.c::core_entry", "file": "src/core.c", "pagerank": 0.5},
+                                    {"qualified_name": "test/mgmt-tester.c::main", "file": "test/mgmt-tester.c", "pagerank": 0.4}],
+                    "note": "已过滤 88 个测试/仿真/生成文件符号(exclude_tests=True)"}
+
+    monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
+    monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
+                        lambda: {"fake_cb": {"graph"}})
+    mcp = build_server()
+    out = _call(mcp, "repo_map", {"map_tokens": 512, "codebase": "fake_cb", "compact": True, "exclude_tests": False})
+    assert seen["exclude_tests"] is False          # 开关透传到图层
+    assert "map_text" not in out and '"top_symbols"' not in out, out  # 无 JSON 全量
+    assert "src/core.c" in out and "core_entry" in out                    # 树 + top-10 在
+    assert "top-10: core_entry" in out, out
+    assert "已过滤 88 个" in out, out                                      # 过滤量诚实可见
+
 
 # ════════════════════════ repo_overview 工具(#14,onboarding skill 主数据源)════════════════════════
 
@@ -238,12 +272,13 @@ def test_repo_overview_success_via_fake_graph(monkeypatch):
                     "cross_community_edges": [{"source_community": 0, "target_community": 1}],
                     "warnings": ["High coupling (12 edges) between 'core' and 'util'"]}
 
-        def hub_nodes(self, *, top_n: int = 15):
+        def hub_nodes(self, *, top_n: int = 15, exclude_tests: bool = True):
             seen["top_n"] = top_n
+            seen["hub_exclude_tests"] = exclude_tests
             return [{"name": "main", "qualified_name": "f.c::main", "kind": "function",
                      "file": "f.c", "in_degree": 5, "out_degree": 3, "total_degree": 8, "community_id": 0}]
 
-        def bridge_nodes(self, *, top_n: int = 15):
+        def bridge_nodes(self, *, top_n: int = 15, exclude_tests: bool = True):
             return [{"name": "bridge_x", "qualified_name": "g.c::bridge_x",
                      "betweenness": 0.9, "community_id": 0}]
 
@@ -257,6 +292,7 @@ def test_repo_overview_success_via_fake_graph(monkeypatch):
     assert "1 高耦合告警" in out, out                              # warnings 非空 → 告警计数
     assert "f.c::main" in out                                     # body(json)含 hub
     assert seen["top_n"] == 8                                     # top_n 透传到 hub_nodes
+    assert seen.get("hub_exclude_tests") is True                  # exclude_tests 默认开、透传到图
 
 
 def test_repo_overview_large_repo_caps_communities_and_keeps_hubs(monkeypatch):
@@ -284,10 +320,10 @@ def test_repo_overview_large_repo_caps_communities_and_keeps_hubs(monkeypatch):
                     "cross_community_edges": [{"source_community": 0, "target_community": 1}] * 100,
                     "warnings": ["High coupling (12 edges) between 'module_0' and 'module_1'"]}
 
-        def hub_nodes(self, *, top_n: int = 15):
+        def hub_nodes(self, *, top_n: int = 15, exclude_tests: bool = True):
             return [{"name": "main", "qualified_name": "f.c::main", "total_degree": 8}]
 
-        def bridge_nodes(self, *, top_n: int = 15):
+        def bridge_nodes(self, *, top_n: int = 15, exclude_tests: bool = True):
             return [{"name": "bridge_x", "qualified_name": "g.c::bridge_x", "betweenness": 0.9}]
 
     monkeypatch.setattr(cg_mod.CodeGraph, "open", lambda target, **kw: _FakeGraph())
@@ -574,6 +610,34 @@ def test_memory_recall_union_general_pool(monkeypatch):
     assert "[general] " in out, out                                    # 跨池命中亮明池子
     assert "tags=a2dp" in out, out                                     # 主题域标签可见(短路判定提速)
     assert fake.search_scopes[0].codebase == "bluez" and fake.search_scopes[-1].codebase == "general"
+
+
+def test_memory_recall_low_sim_warning(monkeypatch):
+    """头牌语义相关度低于阈值 → 头部警示劝退短路;低分条目带(低相关)标记 —— 只标不删。
+
+    标定(text-embedding-v4,2026-08-26 远端):相关 0.64-0.92 / 无关 0.18-0.28,阈值 0.40。
+    RRF 分不可用:小池子里无关查询也拿满分(0.0315 vs 0.0318),只有余弦承载语义。
+    """
+    from rootrecall.services.memory.schema import RecallHit
+
+    def hit(summary: str, score: float, sim: float | None) -> RecallHit:
+        return RecallHit(summary=summary, score=score, kind="domain_knowledge",
+                         repo="general", item_id=summary[:8], confidence=0.9, sim=sim)
+
+    fake = _FakeMemSvc()
+    fake.search_returns = {"general": [hit("量子纠缠无关条目", 0.03, 0.22), hit("勉强沾边条目", 0.02, 0.35)]}
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake)
+    mcp = build_server()
+    out = _call(mcp, "memory_recall", {"query": "量子纠缠调度器", "top_k": 3})
+    assert "sim=0.22" in out and "按 miss 处理" in out, out      # 头牌低相关 → 劝退短路
+    assert "(低相关 0.22)" in out and "(低相关 0.35)" in out, out  # 低分条目标记(仍可见,不删)
+
+    fake2 = _FakeMemSvc()
+    fake2.search_returns = {"general": [hit("A2DP 相关条目", 0.03, 0.85)]}
+    monkeypatch.setattr("rootrecall.services.memory.get_memory_service", lambda: fake2)
+    mcp2 = build_server()  # svc 在建 server 时捕获,换 fake 必须重建
+    out2 = _call(mcp2, "memory_recall", {"query": "A2DP 蓝牙", "top_k": 3})
+    assert "⚠️" not in out2 and "低相关" not in out2, out2         # 高相关:零警示零标记
 
 
 def test_memory_recall_miss_lists_scopes(monkeypatch):

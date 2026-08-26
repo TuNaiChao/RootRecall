@@ -823,17 +823,37 @@ class CodeGraph:
 
         return get_communities(self._store)
 
-    def hub_nodes(self, top_n: int = 15) -> list[dict]:
-        """hub 节点(in+out 度最高):核心函数 / 被大量依赖的枢纽。报告「结构风险」用。"""
+    def hub_nodes(self, top_n: int = 15, *, exclude_tests: bool = True) -> list[dict]:
+        """hub 节点(in+out 度最高):核心函数 / 被大量依赖的枢纽。报告「结构风险」用。
+
+        exclude_tests(默认开):过滤测试/仿真/生成文件路径的节点 —— 实测(2026-08-26 bluez)
+        不过滤时 hub 榜被 mgmt-tester(474 入边)、ltmain.sh(度 1475)霸屏,真正的核心入口
+        全被挤出 top_n。实现:超采样 top_n×8 再过滤截断(CRG 的度数是全图预算好的,多取便宜)。
+        """
         from code_review_graph.analysis import find_hub_nodes
 
-        return find_hub_nodes(self._store, top_n=top_n)
+        from rootrecall.services.code_index.noisepaths import is_noise_path
 
-    def bridge_nodes(self, top_n: int = 15) -> list[dict]:
-        """bridge 节点(betweenness 最高):多处最短路径必经的瓶颈,断了多社区失联。"""
+        fetch_n = max(top_n * 8, top_n + 40) if exclude_tests else top_n
+        hubs = find_hub_nodes(self._store, top_n=fetch_n)
+        if exclude_tests:
+            hubs = [h for h in hubs if not is_noise_path(h.get("file") or "")]
+        return hubs[:top_n]
+
+    def bridge_nodes(self, top_n: int = 15, *, exclude_tests: bool = True) -> list[dict]:
+        """bridge 节点(betweenness 最高):多处最短路径必经的瓶颈,断了多社区失联。
+
+        exclude_tests(默认开):同 hub_nodes —— 测试文件的调用量虚高会顶出假瓶颈。
+        """
         from code_review_graph.analysis import find_bridge_nodes
 
-        return find_bridge_nodes(self._store, top_n=top_n)
+        from rootrecall.services.code_index.noisepaths import is_noise_path
+
+        fetch_n = max(top_n * 8, top_n + 40) if exclude_tests else top_n
+        bridges = find_bridge_nodes(self._store, top_n=fetch_n)
+        if exclude_tests:
+            bridges = [b for b in bridges if not is_noise_path(b.get("file") or "")]
+        return bridges[:top_n]
 
     def impact_radius(self, changed_files: list[str]) -> dict:
         """改动影响面(BFS):给定一批改动文件,返回受波及的节点/文件/边(blast-radius)。
@@ -988,7 +1008,7 @@ class CodeGraph:
                 "callers": callers, "callees": callees, "truncated": trunc_c or trunc_x, "note": note}
 
     # ── #38 repo-map:PageRank 排名的全仓符号地图(Aider repomap 式)──────────────
-    def repo_map(self, *, map_tokens: int = 2048) -> dict:
+    def repo_map(self, *, map_tokens: int = 2048, exclude_tests: bool = True) -> dict:
         """全仓 PageRank 排名的符号地图(Aider repomap 式),塞进 token 预算。
 
         给 agent 一张「**这个仓里结构上最重要的函数是哪些**」的全局地图 —— 不聚焦某个符号
@@ -998,6 +1018,9 @@ class CodeGraph:
         面向小白:call_chain 是「顺着这个函数的调用关系往上下游走 N 跳」(手电筒照一条路);
         repo_map 是「站高处俯瞰整座城,标出最重要的地标」(卫星图)。bug-RCA 委托前给 delegate
         这张图当全局视角,或深度调研时当「关键模块」骨架。
+
+        ``exclude_tests``(默认开):测试/仿真/生成文件的符号不进地图 —— 测试文件的调用量
+        虚高会让 PageRank 前 50 名里一半是 *-tester(实测 bluez),挤掉真正的核心模块。
 
         算法(对标 Aider repomap,但**复用 CRG 已抽好的 CALLS 边 + RootRecall 已有的 _pagerank**,
         不另抄 tags.scm):
@@ -1013,12 +1036,14 @@ class CodeGraph:
         """
         import networkx as nx
 
+        from rootrecall.services.code_index.noisepaths import is_noise_path
+
         nxg = self._store._build_networkx_graph()  # 缓存整图(同 call_chain:403)
         # CALLS-only 子图:同 call_chain:427-430 的构造,一字不改(call 边是高信号子集)
         calls = nx.DiGraph()
         calls.add_edges_from((u, v) for u, v, d in nxg.edges(data=True) if d.get("kind") == "CALLS")
         scores: dict[str, float] = _pagerank(calls)  # 现成,分层降级(同 call_chain:439)
-        if not scores:  # 无 CALLS 边 / 空图 → 算不出排名,返空地图(不抛,工具层正常展示)
+        if not scores:  # 无 CALLS 边(空图 / 全孤立)→ 算不出排名,返空地图(不抛,工具层正常展示)
             return {"repo": self.repo_name, "map_text": "", "n_symbols": 0, "n_files": 0,
                     "map_tokens_budget": map_tokens, "map_tokens_used": 0, "truncated": False,
                     "top_symbols": [], "note": "调用图无 CALLS 边(空仓 / 全孤立符号),算不出排名。"}
@@ -1031,12 +1056,16 @@ class CodeGraph:
         tokens = 0
         files: dict[str, list[str]] = {}
         rankable = 0  # 有元数据、能进地图的符号总数(truncated 判定用)
+        excluded = 0  # 被噪声过滤掉的符号数(诚实信号:榜单少了谁要可见)
         for qn in ranked:
             nd = meta.get(qn)
             if nd is None or not getattr(nd, "file_path", None):
                 continue
-            rankable += 1
             fpath = nd.file_path
+            if exclude_tests and is_noise_path(fpath):
+                excluded += 1
+                continue  # 不进 rankable:它们本来就不该出现在这张地图上
+            rankable += 1
             # 显示名 = 剥路径前缀后的可读名(同渲染器 _sym 的剥法);token 估算用它才贴近实际渲染,
             # 不会因 CRG 的绝对路径前缀把估算撑爆 → 早停少装(踩坑:估算用全长 qn 会虚高 ~2.5x)。
             disp = qn[len(fpath) + 2:] if qn.startswith(fpath + "::") else qn.split("::")[-1]
@@ -1052,6 +1081,7 @@ class CodeGraph:
             files.setdefault(fpath, []).append(qn)
 
         map_text = _render_repomap_tree(files, meta, scores)
+        note = f"已过滤 {excluded} 个测试/仿真/生成文件符号(exclude_tests=True)" if excluded else ""
         return {
             "repo": self.repo_name,
             "map_text": map_text,
@@ -1062,7 +1092,7 @@ class CodeGraph:
             "truncated": len(chosen) < rankable,  # 有能排的符号但被预算截了
             "top_symbols": [{"qualified_name": qn, "file": nd.file_path,
                              "pagerank": round(sc, 6)} for qn, nd, sc in chosen[:10]],
-            "note": "",
+            "note": note,
         }
 
     # ── P-A 1b 批量聚合用的改动分析(扩 wrap CRG changes.py,R4.1.2)──────────────

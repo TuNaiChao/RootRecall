@@ -231,6 +231,10 @@ class RecallHit(BaseModel):
     corrected_by: str | None = None  # 非空 = 这条被另一条纠正了(检索降权;仍可见作参考,不同于 superseded_by)
     item_id: str | None = None  # 命中的 KI id(memory 路;code/structural 路为 None)
     tags: list[str] = Field(default_factory=list)  # 透传 KI 标签(渲染「未真机验证」等纪律标记用)
+    sim: float | None = None  # 语义相关度(向量路原始余弦,RRF 融合前;无向量路/bm25-only → None)。
+    # 用途(2026-08-26 实测):RRF 分只反映池内排名一致性,小池子里无关查询也能拿满分
+    # (无关 0.0315 = 相关 0.0318);余弦才是语义信号 —— 相关 0.64-0.92 / 无关 0.18-0.28
+    # (text-embedding-v4 远端实测标定),工具层据此给「低相关」警示。
     # code/structural 路的定位字段(memory 路用 evidence)
     file: str | None = None
     line_start: int | None = None

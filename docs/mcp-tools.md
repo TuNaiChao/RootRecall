@@ -71,6 +71,8 @@ memory_recall(query: str, top_k: int = 5, kind: str | None = None, codebase: str
 
 **general 池并查**(2026-08-26 实测教训:同一条 A2DP 知识一条记 bluez、一条记 general,单池 recall 查一个漏一个):每次 recall 除你传的 codebase 外**总是并查共享 `general` 池**(领域知识所在地),命中按 id 去重、跨池条目前缀 `[general]` 标明;空结果列出非空作用域清单,`codebase` 传错一次就能改对(服务器默认作用域常常是空池)。配套写侧规则:`memorize(kind=domain_knowledge)` **无视传参强制落 general 池**。
 
+**低相关警示**(2026-08-26 标定):RRF 分只反映池内排名一致性(小池子里无关查询也拿满分),真正的语义信号是向量余弦 —— 相关 0.64-0.92 / 无关 0.18-0.28,阈值 0.40。头牌命中 `sim<0.40` 时输出头部会明确劝退(`按 miss 处理,别拿这些条目短路`),低分条目带 `(低相关 0.xx)` 标记但仍可见 —— 只标不删,防「无关查询被当命中」的假秒答。
+
 ### memory_memorize
 
 ```python
@@ -161,16 +163,25 @@ call_chain(symbol: str, direction: str = "both", depth: int = 2, top_n: int = 15
 ### repo_map
 
 ```python
-repo_map(map_tokens: int = 2048, codebase: str | None = None) -> str
+repo_map(map_tokens: int = 2048, codebase: str | None = None,
+         exclude_tests: bool = True, compact: bool = False) -> str
 ```
 
 全仓调用图跑 PageRank,把最重要的符号按文件分组打包进 `map_tokens` 预算(Aider 式 repo map)。调研 / 定位前先拿一张「哪些函数结构上最核心」的骨架图。要更小的图就减小 map_tokens 重调。
 
+| 参数 | 说明 |
+|---|---|
+| `exclude_tests` | 测试/仿真/生成文件(`test/`、`emulator/`、`unit/`、`*-tester.c`、`ltmain.sh` 等)的符号不进地图,默认开 —— 实测不过滤时 bluez 的 PageRank 前 50 一半是 *-tester;note 字段诚实报过滤量。要看测试基建布局传 `false` |
+| `compact` | 只要 header + 地图树 + top-10 名单,不吐全量 JSON —— 大仓约省一半输出,看鸟瞰图时推荐 |
+
 ### repo_overview
 
 ```python
-repo_overview(top_n: int = 15, max_communities: int = 30, codebase: str | None = None) -> str
+repo_overview(top_n: int = 15, max_communities: int = 30, codebase: str | None = None,
+             exclude_tests: bool = True) -> str
 ```
+
+`exclude_tests` 默认开:hubs/bridges 过滤测试/仿真/生成文件节点(实测 bluez 的 hub 榜被 mgmt-tester[474 入边]、ltmain.sh[度 1475] 霸屏,真核心全被挤出);要看原始布局传 `false`。
 
 | 参数 | 说明 |
 |---|---|

@@ -154,15 +154,21 @@ def recall(
     voices: list[list[RecallHit]] = []
     # memory·BM25(始终)
     voices.append([_ki_to_hit(ki, s) for ki, s in store.search_bm25(query, scope, repo=repo, limit=cand)])
-    # memory·vector(需 embedder)
+    # memory·vector(需 embedder)—— 顺手记下每条的原始余弦(RRF 融合前),供工具层判语义相关度:
+    # RRF 只看池内排名一致性,小池子里无关查询也满分;余弦才是「问的和记的是不是一回事」。
+    qvec = None
     if embedder is not None:
         try:
             qvec = embedder.embed_query(query)
         except Exception as e:  # noqa: BLE001
             logger.warning("memory.recall: 查询嵌向量失败,跳向量路: %s", e)
-            qvec = None
-        if qvec is not None:
-            voices.append([_ki_to_hit(ki, s) for ki, s in store.search_vector(qvec, scope, repo=repo, limit=cand)])
+    sim_by_id: dict[str, float] = {}
+    if qvec is not None:
+        vhits = [_ki_to_hit(ki, s) for ki, s in store.search_vector(qvec, scope, repo=repo, limit=cand)]
+        for h in vhits:
+            if h.item_id:
+                sim_by_id[h.item_id] = max(h.score, sim_by_id.get(h.item_id, -1.0))
+        voices.append(vhits)
     # code_index(可选)
     if code_bundle is not None and repo:
         voices.append(_code_voice(query, repo, code_bundle, cand))
@@ -176,6 +182,8 @@ def recall(
     fused = _rrf_fuse(voices)
     if not fused:
         return []
+    for h in fused:  # 语义相关度挂载(RRF 会覆盖 score;sim 保留向量路原始余弦)
+        h.sim = sim_by_id.get(h.item_id or "")
 
     # 可选 rerank(复用 code_index 的 reranker):对融合后的 summary 精排,保留 2× 池子再衰减裁剪。
     if reranker is not None and len(fused) > 1:

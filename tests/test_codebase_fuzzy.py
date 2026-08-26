@@ -150,7 +150,7 @@ def test_repo_map_autocorrected_name_visible(monkeypatch):
     import rootrecall.services.code_index.code_graph as cg_mod
 
     class _FakeGraph:
-        def repo_map(self, *, map_tokens: int = 2048):  # noqa: ANN001
+        def repo_map(self, *, map_tokens: int = 2048, exclude_tests: bool = True):  # noqa: ANN001
             return {"n_symbols": 2, "n_files": 1, "map_text": "f.c", "truncated": False,
                     "top_symbols": [], "note": ""}
 

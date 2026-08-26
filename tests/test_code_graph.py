@@ -209,6 +209,48 @@ def test_call_chain_bad_direction(tmp_path):
         cg.call_chain("alpha", direction="sideways")
 
 
+# ── exclude_tests(P2,2026-08-26 实测:mgmt-tester 474 入边、ltmain.sh 度 1475 霸榜)──
+
+
+@needs_crg
+def test_hub_and_repomap_exclude_tests(tmp_path):
+    """exclude_tests(默认开):test/ 目录符号不进 hub 榜与 repo_map;关掉则回全量(开关真通)。
+
+    夹具:test/ 里造一个高 degree 噪声中心(20 个测试函数全调它 + 它反调 20 个),
+    src/ 里是低 degree 的真核心 —— 不过滤时噪声中心必登榜首,过滤后应消失。
+    """
+    core = tmp_path / "src"
+    core.mkdir()
+    (core / "core.py").write_text(
+        "def core_entry():\n    return helper_a() + helper_b()\n"
+        "def helper_a():\n    return 1\n"
+        "def helper_b():\n    return 2\n"
+    )
+    tdir = tmp_path / "test"
+    tdir.mkdir()
+    callers = "".join(f"def t{i}():\n    return noise_center()\n" for i in range(20))
+    callees = "".join(f"    noise_leaf_{i}()\n" for i in range(20))
+    (tdir / "test_noise.py").write_text(
+        "def noise_center():\n" + callees + callers
+    )
+    cg = CodeGraph.build(tmp_path, "fixture_excl", base_dir=str(tmp_path))
+
+    # 关掉开关:噪声中心(test/)登上 hub 榜首(度数 40,远超 core_entry 的 3)
+    raw_hubs = cg.hub_nodes(top_n=5, exclude_tests=False)
+    assert any("/test/" in (h.get("file") or "") for h in raw_hubs), raw_hubs
+
+    # 默认开:test/ 符号全部消失,剩 src/ 的真核心
+    hubs = cg.hub_nodes(top_n=5)
+    assert hubs and all("/test/" not in (h.get("file") or "") for h in hubs), hubs
+    assert any("core" in (h.get("file") or "") for h in hubs), hubs
+
+    # repo_map 同理:默认 map_text 无 test_noise;关掉则出现;note 诚实报过滤量
+    m = cg.repo_map(map_tokens=2048)
+    assert "test_noise" not in (m.get("map_text") or "") and "过滤" in (m.get("note") or ""), m["note"]
+    m_raw = cg.repo_map(map_tokens=2048, exclude_tests=False)
+    assert "test_noise" in (m_raw.get("map_text") or "") and m_raw.get("note") == ""
+
+
 # ── repo_map(PageRank 排名全仓符号地图,#38)────────────────────────────────
 
 

@@ -142,6 +142,11 @@ def _graph_missing_msg(target: str, known: dict[str, set[str]]) -> str:
     return (f"代码库 '{target}' 的结构图未建。先建:`rootrecall baseline add <仓库路径> --name {target}`。")
 
 
+# recall 语义相关度警示阈值(text-embedding-v4,2026-08-26 远端真库标定):
+# 相关查询 0.64-0.92,无关查询 0.18-0.28 —— 0.40 居中、两侧余量充足。换嵌入模型需重标定。
+_RECALL_SIM_WARN = 0.40
+
+
 # ── 工具门控(省上下文):ROOTRECALL_MCP_TOOLS 决定 server 注册哪些工具 ──────────
 #
 # 为什么在「注册」层做、而不是 opencode 的 permission deny:deny 只是"看得见但调不了",
@@ -416,11 +421,22 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
                     f"确认 codebase 传对了吗 —— 项目记忆传项目名(如 bluez),领域知识在 general;"
                     f"服务器默认作用域常常不是你要的那个池子。")
         tag = f", kind={kind}" if kind else ""
-        out = [f"Recalled {len(hits[:top_k])} (by relevance, codebase={active_repo}{tag},并查 general 池):"]
-        for h in hits[:top_k]:
+        shown = hits[:top_k]
+        # 语义相关度警示(2026-08-26 标定:RRF 满分 ≠ 相关 —— 无关查询在小池也拿 0.0315;
+        # 余弦才是信号,相关 0.64-0.92 / 无关 0.18-0.28,阈值 0.40 居中)。只标不删:低相关
+        # 命中仍可见(诚实),但头牌低相关时明确劝退短路 —— 防「无关查询被当命中」的假秒答。
+        top_sim = shown[0].sim if shown else None
+        warn = ""
+        if top_sim is not None and top_sim < _RECALL_SIM_WARN:
+            warn = (f"⚠️ 最高命中的语义相关度 sim={top_sim:.2f} < {_RECALL_SIM_WARN} —— 大概率主题不符,"
+                    f"按 miss 处理(走冷路径完整调研),别拿这些条目短路。\n")
+        out = [f"{warn}Recalled {len(shown)} (by relevance, codebase={active_repo}{tag},并查 general 池):"]
+        for h in shown:
             line = h.render()
             if h.repo and h.repo != active_repo:
                 line = f"[{h.repo}] {line}"  # 跨池命中亮明住在哪(治「查一个漏一个」)
+            if h.sim is not None and h.sim < _RECALL_SIM_WARN:
+                line += f"  (低相关 {h.sim:.2f})"
             out.append(line)
         return "\n".join(out)
 
@@ -923,7 +939,8 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
     # 和 call_chain 互补:call_chain = 一个符号的调用上下文(手电筒照一条路);
     # repo_map = 全仓最重要符号俯瞰图(卫星图),委托前给 agent 全局视角 / 调研「关键模块」骨架。
     @_tool("repo_map")
-    async def repo_map(map_tokens: int = 2048, codebase: str | None = None) -> str:
+    async def repo_map(map_tokens: int = 2048, codebase: str | None = None,
+                       exclude_tests: bool = True, compact: bool = False) -> str:
         """Whole-repo symbol map ranked by PageRank importance (Aider-style repo map), packed into a token budget.
 
         Returns a bird's-eye view of which functions are structurally most central across the WHOLE repo
@@ -935,8 +952,13 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         Complement to call_chain: call_chain is one symbol's call context (flashlight down one path);
         repo_map is the whole-repo importance overview (satellite map). Also distinct from hub_nodes
         (degree-based top-15 flat list) — repo_map is PageRank (centrality) based, larger, and tree-grouped.
-        map_tokens: token budget for the map (default 2048).
-        codebase:   override which codebase's graph (default = this server's codebase; near-names
+        map_tokens:     token budget for the map (default 2048).
+        exclude_tests:  drop test/emulator/generated-file symbols from the map (default True — bluez field
+                  report: unfiltered PageRank had *-tester files crowding out real core modules;
+                  pass False only when you deliberately want the test infra layout).
+        compact:        return just the map tree + top-10 names instead of the full JSON body — roughly
+                  halves the output for big repos when you only need the bird's-eye view.
+        codebase:       override which codebase's graph (default = this server's codebase; near-names
               fuzzy-resolved, list: `rootrecall baseline ls`).
         Needs the codebase graph built; returns a 'not built' hint otherwise.
         """
@@ -949,14 +971,27 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
             return cb_note
         try:
             cg = CodeGraph.open(target)
-            result = cg.repo_map(map_tokens=map_tokens)
+            result = cg.repo_map(map_tokens=map_tokens, exclude_tests=exclude_tests)
         except FileNotFoundError:
             return _graph_missing_msg(target, known)
         except Exception as e:  # noqa: BLE001
             return f"算仓库地图失败({target}): {e}"
+        # compact:只要树 + top-10 名单(大仓省一半输出;JSON 全量给程序化消费才需要)
+        excl_note = result.get("note") or ""
+        if compact:
+            top10 = ", ".join(t.get("qualified_name", "").split("::")[-1]
+                              for t in result.get("top_symbols", [])[:10])
+            tree = result.get("map_text", "")
+            return (f"{cb_note}repo-map(codebase={target}, map_tokens={map_tokens}, "
+                    f"exclude_tests={exclude_tests}, compact):"
+                    f" {result.get('n_symbols', 0)} symbols / {result.get('n_files', 0)} files"
+                    f"{' (truncated by budget)' if result.get('truncated') else ''}"
+                    f"{('  ' + excl_note) if excl_note else ''}\n"
+                    f"{_honest_truncate(tree, 6000, how_to_refetch='要更小的地图:减小 map_tokens 重调')}"
+                    + (f"\ntop-10: {top10}" if top10 else ""))
         import json
         body = json.dumps(result, ensure_ascii=False, default=str)
-        return (f"{cb_note}repo-map(codebase={target}, map_tokens={map_tokens}):"
+        return (f"{cb_note}repo-map(codebase={target}, map_tokens={map_tokens}, exclude_tests={exclude_tests}):"
                 f" {result.get('n_symbols', 0)} symbols / {result.get('n_files', 0)} files"
                 f"{' (truncated by budget)' if result.get('truncated') else ''}\n"
                 f"{_honest_truncate(body, 8000, how_to_refetch='要更小的地图:减小 map_tokens 重调(top_symbols 字段已含前 10 名摘要)')}")
@@ -970,7 +1005,8 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
     # 全是纯图查询(无 LLM),图驱动防幻觉 —— 讲「这仓分几大模块」靠社区检测,不是模型瞎编。
     @_tool("repo_overview")
     async def repo_overview(
-        top_n: int = 15, max_communities: int = 30, codebase: str | None = None
+        top_n: int = 15, max_communities: int = 30, codebase: str | None = None,
+        exclude_tests: bool = True,
     ) -> str:
         """Single-repo architectural overview: module boundaries + hub/bridge nodes + coupling warnings.
 
@@ -993,6 +1029,9 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
         top_n:           how many hub_nodes / bridge_nodes to return (default 15 each).
         max_communities: cap on how many communities to include, largest-first (default 30).
                          The header still reports the true total community count.
+        exclude_tests:   drop test/emulator/generated-file nodes from hubs/bridges (default True —
+                         bluez field report: mgmt-tester[474 in-edges] and ltmain.sh[degree 1475]
+                         crowded out every real core; pass False only when you want the raw layout).
         codebase:        override which codebase's graph (default = this server's codebase;
                          near-names fuzzy-resolved, list: `rootrecall baseline ls`).
         Needs the codebase graph built; returns a 'not built' hint otherwise.
@@ -1009,8 +1048,8 @@ def build_server(codebase: str | None = None, *, host: str | None = None, port: 
             arch = cg.architecture_overview()         # {communities, cross_community_edges, warnings}
             # communities 复用 arch 已经取好的(architecture_overview 内部已调 get_communities,省一次调用)
             communities = arch.get("communities", [])
-            hubs = cg.hub_nodes(top_n=top_n)          # 被依赖最多的核心枢纽
-            bridges = cg.bridge_nodes(top_n=top_n)    # 架构瓶颈/咽喉(betweenness 最高)
+            hubs = cg.hub_nodes(top_n=top_n, exclude_tests=exclude_tests)          # 被依赖最多的核心枢纽
+            bridges = cg.bridge_nodes(top_n=top_n, exclude_tests=exclude_tests)    # 架构瓶颈/咽喉(betweenness 最高)
         except FileNotFoundError:
             return _graph_missing_msg(target, known)
         except Exception as e:  # noqa: BLE001

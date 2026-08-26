@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from rootrecall.services.code_index.embed import Embedder
+from rootrecall.services.code_index.noisepaths import is_testinfra_path
 from rootrecall.services.code_index.store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -246,32 +247,14 @@ def _granularity_prior(kind: str, symbol: str) -> float:
 # 路径级测试基建先验(2026-08-26 实测:bluez 问「连接流程」,top-6 全是 emulator/bthost.c、
 # android/gatt.c 外围符号,核心入口 src/device.c::device_connect_le 挤不进 —— 测试/仿真文件
 # 体量大、符号密、把流程词全占满)。降而不剔:专门查 emulator/测试时 rerank 分领先仍可进 top-k。
+# 判定逻辑共享自 noisepaths.py(图侧 exclude_tests 用同一份清单;import 在文件顶部)。
+
 _PRIOR_TESTINFRA = 0.70
-_TEST_SEGMENTS = frozenset({
-    "test", "tests", "testing", "emulator", "example", "examples", "demo",
-    "mock", "stub", "benchmark", "bench", "unit", "units",
-})
 
 
 def _testinfra_prior(path: str) -> float:
-    """路径含测试/仿真/示例基建 → 0.70(纯函数,便于单测)。
-
-    判定(路径段):任一目录段在 _TEST_SEGMENTS 或以 test 开头(tests/testing/testdata);
-    或文件名主干以 -test/_test/-tester/_tester/-mock/test 结尾(mgmt-tester.c、unit_test.py)。
-    android 等真构建变体目录**不在**列 —— 那是产品代码,只是对特定查询外围,交给 rerank。
-    """
-    if not path:
-        return 1.0
-    parts = path.replace("\\", "/").lower().split("/")
-    for seg in parts[:-1]:
-        if seg in _TEST_SEGMENTS or seg.startswith("test"):
-            return _PRIOR_TESTINFRA
-    stem = parts[-1].rsplit(".", 1)[0]
-    # 只认显式分隔符形态(-test/_test/-tester/_tester/-mock);裸 endswith("test") 会误伤
-    # latest/greatest 这类正常单词(2026-08-26 自家测试抓的假阳性)。
-    if any(stem.endswith(s) for s in ("-test", "_test", "-tester", "_tester", "-mock", "_mock")):
-        return _PRIOR_TESTINFRA
-    return 1.0
+    """路径含测试/仿真/示例基建 → 0.70(纯函数,便于单测);android 等真构建变体不降(交给 rerank)。"""
+    return _PRIOR_TESTINFRA if is_testinfra_path(path) else 1.0
 
 
 # ──────────────────────────────────────────────────────────────────────────
