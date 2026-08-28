@@ -42,7 +42,7 @@ metadata:
    ```
 2. **搬 skills**:唯一实质改动 = **SKILL 正文工具名** `rootrecall_*` → `mcp__rootrecall__*`(8e524de 命名漂移同类工程)。做成生成脚本 `scripts/wire_dsh.sh`(镜像 `wire_opencode.sh`,sed 前缀替换 + 剥 `allowed-tools` 段),单一事实源防两宿主漂移(踩坑#17 教训)。
 3. **preset × 8**(T0.5 可选):persona + toolFilter 复刻 agent block。
-4. **验证**:复用 TEST-PLAN 场景换宿主跑 `pnpm dsh --profile headless "…"`(dsh 侧取证看它的 session 事件流 JSONL,比 opencode.db 更友好);**换宿主不换判据**(sdp :1255 / compare 四差异等金标不变)。
+4. **验证**:复用归档的 TEST-PLAN 场景(docs/archive/TEST-PLAN.md,金标部分仍有效)换宿主跑 `pnpm dsh --profile headless "…"`(dsh 侧取证看它的 session 事件流 JSONL,比 opencode.db 更友好);**换宿主不换判据**(sdp :1255 / compare 四差异等金标不变)。
 
 ## T1:薄 TS 插件(2-3 天,把纪律变机制)
 
@@ -64,4 +64,4 @@ metadata:
 
 ① 工具名映射是最大搬运成本(SKILL × 8),用生成脚本别手改;② dsh skill 按需加载 → description 是路由依据(踩坑#13 同构,质量更关键);③ 网上 deepseekdocs.com / deepseekharness.io / dsh.deepseek404.com 等域**非官方**(内容农场嫌疑),开发只信本地 clone 的 docs/ 与代码。
 
-关联 [[colleague-onboarding-toolset-handoff]](wire 脚本先例)/ [[opencode-mcp-wiring]](宿主接线坑)/ [[opencode-config-drift]](单一事实源教训)/ [[l2-granularity-prior-handoff]](TEST-PLAN 金标)。
+关联 [[colleague-onboarding-toolset-handoff]](wire 脚本先例)/ [[opencode-mcp-wiring]](宿主接线坑)/ [[opencode-config-drift]](单一事实源教训)/ [[l2-granularity-prior-handoff]](TEST-PLAN 金标,已归档至 docs/archive/)。
