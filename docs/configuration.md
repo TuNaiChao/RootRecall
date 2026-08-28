@@ -215,7 +215,7 @@ embedding 只有两档 provider(见 §code_index),**没有「纯 BM25 检索」�
 |---|---|---|
 | 全功能(默认) | `.env` 配 `DASHSCOPE_API_KEY` | 全部 17 个工具 |
 | **零 key 本地档** | `uv run uv sync --extra embedding-local` + config.yaml `embedding.provider: sentence_transformers`、`reranker.provider: off` | 全部 17 个工具(模型经 hf-mirror 本地下载,数据不出本地;embedding 质量低于远端档) |
-| 零 key 零本地模型 | 不配 | 记忆(recall/memorize/dump,FTS 路可用)+ 仓库管理(baseline add/checkout/sync、repo gc)+ `fetch_patch`/`ensure_repo`;**检索类(search_codebase / blast_radius / call_chain / repo_map / repo_overview)不可用**(`baseline add`/`rootrecall index` 前置 embedder,零 key 直接报错并指路) |
+| 零 key 零本地模型 | 不配 | 记忆(recall/memorize/dump —— **降级不崩**:只剩 BM25 路,无向量 / 无 rerank / **无低相关 sim 警示**;此间写入的条目无向量,配 key 后也不自动补嵌)+ git 系(cross_version_diff / merge_eval / when_introduced)+ 硬门(validate/export ×3)+ `fetch_patch`/`ensure_repo`/`find_repo` + 仓库管理(**登记** / ls、sync 的 fetch→ff、checkout 开 worktree;`baseline add`/`rootrecall index` 的**建索引步**前置 embedder,零 key 报错并指路——结构图同经 index 建,一并卡死);**检索类(search_codebase / blast_radius / call_chain / repo_map / repo_overview)不可用** |
 
 quickstart 检测到未配 `DASHSCOPE_API_KEY` 会打印上面 a/b 两条路的提示;`rootrecall index`
 在零 key 时也会给同款指路(不甩栈)。
