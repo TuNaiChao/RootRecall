@@ -42,6 +42,8 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 git clone https://github.com/TuNaiChao/RootRecall.git && cd RootRecall
+> 💡 装了 opencode 的机器,chat 模型的 url/key 可直接复用宿主的(`uv run rootrecall opencode-models` 探测/采纳,key 不落盘);embedding/reranker 仍需自己的 key。
+
 bash scripts/quickstart.sh    # 依赖 + .env 密钥 + 模型验证 + 代码仓总目录 + 接线自检(幂等,可重跑)
 ```
 

@@ -240,3 +240,10 @@ patch:
     clone_dir: data/repos     # auto-clone 落点(ensure_repo 命中这里就不再 clone,幂等)
     shallow: true             # --depth 1 浅克隆(省时省空间;要完整历史改 false)
     remotes: {}               # {仓库名: git url} —— 你的"自定义 git 连接"(内网镜像/SSH),如 {bluez: https://...}
+
+# ── opencode 宿主桥接(2026-08-28;chat 模型复用宿主 url/key,key 不落盘)──────────────
+# 机器上已配好 opencode 的话,chat 模型不用再配一份 key:
+#   uv run rootrecall opencode-models                 # 探测宿主可派生的模型(key 只验存在)
+#   uv run rootrecall opencode-models --adopt <provider>/<model>   # 采纳 → 在本文件末尾生成
+#   # models_from_opencode: 标记段(只有 provider/model/name,key 运行时从宿主 auth.json 读)
+# embedding/reranker 不从宿主读(宿主 chat provider 多半无 /embeddings;向量空间锁死 provider)。

@@ -144,6 +144,23 @@ system prompt);介意就用项目级 [wire_opencode.sh](../scripts/wire_opencode
 uv run rootrecall models
 ```
 
+## opencode-models(宿主桥接)
+
+复用宿主 opencode 已配好的 chat 模型(url + key)—— key **不落盘**(磁盘上只有 provider/model,
+运行时从 `~/.local/share/opencode/auth.json` 读)、**不显示**;embedding/reranker 不从此路(宿主
+chat provider 多半没有 /embeddings 端点,向量空间也锁死 provider,embedding 保持 `.env` 显式配置)。
+
+```bash
+uv run rootrecall opencode-models                              # 探测:列出可派生模型 + key 有无(布尔)
+uv run rootrecall opencode-models --adopt u/glm-5 u/kimi       # 采纳:写 config.yaml 末尾标记段(整块覆盖)
+uv run rootrecall models                                       # 确认派生条目(opencode-<provider>-<model>)
+```
+
+要点:只认 `~/.config/opencode/opencode.json` 里**显式写了 `baseURL`** 且列了 `models` 的
+provider(`oauth` 型凭证调不了 API,不算);采纳段是**本机私有改动**(提交时留意别把标记段带进
+上游);要用派生模型就把 `model_roles` 指过去(如 `default: opencode-u-glm-5`)。派生走
+OpenAI 兼容(ChatOpenAI),anthropic 原生等非兼容端点不适用。
+
 ## lsp(进阶)
 
 L2 精确导航(clangd via multilspy)的自检与冒烟。前提:仓库根有 `compile_commands.json`。

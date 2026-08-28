@@ -79,6 +79,13 @@ fi
 echo "[3/7] 验证模型配置"
 uv run rootrecall models
 
+# 宿主桥接探测(2026-08-28):opencode 里已配好的 chat 模型(url+key)可直接复用,
+# 免得 chat key 再配一份 —— key 不落盘不显示,采纳与否都由用户决定。embedding 不从此路。
+if command -v opencode >/dev/null 2>&1; then
+  echo "  ℹ️ 探测到 opencode 已安装 —— 复用它配好的 chat 模型(免再配 chat key):"
+  uv run rootrecall opencode-models || true
+fi
+
 # ── [4/7] (可选)给目标代码库建索引 ─────────────────────────────────────
 # 检索类工具(search_codebase / blast_radius / call_chain…)需要索引;记忆类不需要。
 echo "[4/7] 建索引(可选)"

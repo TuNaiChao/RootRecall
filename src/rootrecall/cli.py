@@ -22,7 +22,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from rootrecall.platform.config import get_app_config
+from rootrecall.platform.config import _default_config_path, get_app_config
 
 
 def cmd_models(args) -> int:
@@ -38,11 +38,46 @@ def cmd_models(args) -> int:
         if m.supports_vision:
             caps.append("vision")
         cap_str = f"  [{', '.join(caps)}]" if caps else ""
-        print(f"- {m.name:20} {m.use:45}{cap_str}")
+        src = "  (来自 opencode 宿主)" if (m.display_name or "").startswith("opencode:") else ""
+        print(f"- {m.name:20} {m.use:45}{cap_str}{src}")
     if cfg.model_roles:
         print("\nroles:")
         for role, target in cfg.model_roles.items():
             print(f"  {role:16} -> {target}")
+    return 0
+
+
+def cmd_opencode_models(args) -> int:
+    """探测宿主 opencode 的 chat 模型(url+key 复用;key 只验存在,不显示值)。"""
+    from rootrecall.platform.opencode_bridge import adopt_opencode_models, discover_opencode_models
+
+    if args.adopt:
+        try:
+            print(adopt_opencode_models(args.adopt, _default_config_path()))
+        except ValueError as e:
+            print(f"❌ {e}")
+            return 1
+        print("重跑 `rootrecall models` 应能看到派生条目(名称 opencode-<provider>-<model>);"
+              "要用它就把 model_roles 指过去(如 default: opencode-xxx)。")
+        return 0
+
+    r = discover_opencode_models()
+    for note in r["notes"]:
+        print(f"· {note}")
+    if not r["models"]:
+        print("宿主里没有可派生的 chat 模型(要求:~/.config/opencode/opencode.json 的 provider "
+              "显式写了 baseURL 且列了 models;key 在 ~/.local/share/opencode/auth.json,type=api)。")
+        if r["providers_no_url"]:
+            print(f"· 配了但没写 baseURL 的 provider(不派生):{', '.join(r['providers_no_url'])}")
+        return 1
+    print(f"发现 {len(r['models'])} 个可派生 chat 模型(采纳后 key 运行时从宿主读,不落盘):")
+    for m in r["models"]:
+        key = "key✔" if m["has_key"] else "key✘(auth.json 里没有,采纳了也调不通)"
+        print(f"  {m['provider']}/{m['model']:32} {key}  {m['base_url']}")
+    if r["providers_no_url"]:
+        print(f"· 配了但没写 baseURL 的 provider(不派生):{', '.join(r['providers_no_url'])}")
+    print("\n采纳(写进 config.yaml 末尾的 models_from_opencode 段,可多个):")
+    print(f"  uv run rootrecall opencode-models --adopt {r['models'][0]['provider']}/{r['models'][0]['model']}")
     return 0
 
 
@@ -817,6 +852,13 @@ def main(argv: list[str] | None = None) -> int:
     # ── 进阶面:不进 --help 展示但完全可用(自动化/排障;systemd 调 repo sync、opencode 拉起 mcp serve)──
     sub_models = sub.add_parser("models", help="[进阶] 列出 config.yaml 中配置的模型")
     sub_models.set_defaults(func=cmd_models)
+
+    sub_oc = sub.add_parser(
+        "opencode-models",
+        help="探测宿主 opencode 的 chat 模型(url+key 复用,key 不落盘);--adopt 写进 config")
+    sub_oc.add_argument("--adopt", nargs="+", metavar="PROVIDER/MODEL",
+                        help="采纳指定模型(可多个;整块覆盖语义,重跑=刷新全集)")
+    sub_oc.set_defaults(func=cmd_opencode_models)
 
     sub_index = sub.add_parser("index", help="[进阶] 为仓库建索引(向量索引 + 结构图,一次到位)")
     sub_index.add_argument("repo_path", help="仓库根目录路径")

@@ -6,15 +6,18 @@ config.example.yaml and deerflow.config.app_config).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _ENV_PATTERN = re.compile(r"^\$(\w+)$")
+
+logger = logging.getLogger(__name__)
 
 
 class ModelConfig(BaseModel):
@@ -310,6 +313,9 @@ class AppConfig(BaseModel):
 
     models: list[ModelConfig] = Field(default_factory=list)
     model_roles: dict[str, str] = Field(default_factory=dict)
+    # opencode 宿主桥接(2026-08-28):[{provider, model, name?}] —— load 时从宿主现读
+    # base_url/key 物化成 models 里的派生条目(key 不落盘;embedding 不从宿主读,用户定)。
+    models_from_opencode: list[dict] = Field(default_factory=list)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)  # 沙箱 provider + 参数
     code_index: CodeIndexConfig = Field(default_factory=CodeIndexConfig)  # 代码理解服务(P1)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)  # 记忆核心(R1,P3 差异化)
@@ -331,6 +337,46 @@ class AppConfig(BaseModel):
     def _coerce_none_to_dict(cls, v: Any) -> Any:
         return v if v is not None else {}
 
+    @field_validator("models_from_opencode", mode="before")
+    @classmethod
+    def _coerce_none_to_oc_list(cls, v: Any) -> Any:
+        return v if v is not None else []
+
+    @model_validator(mode="after")
+    def _materialize_opencode_models(self) -> AppConfig:
+        """把 models_from_opencode 的 {provider, model, name?} 物化成真正的 chat 模型条目。
+
+        base_url/key 都从宿主**现读**(key 不落盘的核心:磁盘上只有 provider/model/name)。
+        宿主里找不到(provider 没显式 baseURL / 没装 opencode)→ 记 warning + 跳过该条,
+        绝不崩 config 加载(机器没有 opencode 时段还在,是警告不是错误)。显式 models
+        优先于派生条目(重名时 get_model 先命中显式的 —— 它排在前面)。
+        """
+        if not self.models_from_opencode:
+            return self
+        from rootrecall.platform.opencode_bridge import discover_opencode_models, opencode_api_key
+
+        found = {(m["provider"], m["model"]): m
+                 for m in discover_opencode_models()["models"]}
+        for ref in self.models_from_opencode:
+            provider = str(ref.get("provider", "")).strip()
+            model = str(ref.get("model", "")).strip()
+            hit = found.get((provider, model))
+            if not hit:
+                logger.warning(
+                    "models_from_opencode 条目 %s/%s 在宿主 opencode 配置里找不到"
+                    "(要求显式 baseURL),已跳过 —— 跑 `rootrecall opencode-models` 看可选项",
+                    provider, model)
+                continue
+            self.models.append(ModelConfig(
+                use="langchain_openai:ChatOpenAI",
+                name=str(ref.get("name") or f"opencode-{provider}-{model}"),
+                display_name=f"opencode:{provider}/{model}",
+                model=model,
+                base_url=hit["base_url"],
+                api_key=opencode_api_key(provider),
+            ))
+        return self
+
     def get_model(self, name: str) -> ModelConfig | None:
         for m in self.models:
             if m.name == name:
@@ -340,7 +386,14 @@ class AppConfig(BaseModel):
 
 def _resolve_env(value):
     if isinstance(value, str):
-        m = _ENV_PATTERN.match(value.strip())
+        s = value.strip()
+        if s.startswith("$opencode:"):
+            # 宿主桥接 token(2026-08-28):$opencode:<provider> → 运行时读宿主 auth.json,
+            # key 不落盘、不打印;缺 → ""(与 $ENV 缺失同语义)。embedding 不走此路(用户定)。
+            from rootrecall.platform.opencode_bridge import opencode_api_key
+
+            return opencode_api_key(s[len("$opencode:"):].strip())
+        m = _ENV_PATTERN.match(s)
         if m:
             return os.environ.get(m.group(1), "")
     return value
