@@ -125,7 +125,7 @@ bash scripts/wire_opencode.sh /path/to/bug仓 [--codebase <索引名>]
 - **接线会不会动到 bug 仓自己的 opencode.json?** → 不会。已有且不含 rootrecall 的配置备份成 `.bak` 后跳过;软链不穿透写;幂等可重跑。
 - **忘了接线也没全局注册,在 bug 仓启动会怎样?** → MCP 拉不起来(`uv` 在 bug 仓找不到 `.venv`)、skill 发现不了 —— 只是「连不上」,没有任何破坏;回本仓根启动、补跑接线脚本、或 `install --global` 任选其一。
 - **全局装行不行?** → 行,且是推荐姿势(§四①)。代价(所有会话常驻工具 schema + 路由表)与两个减负旋钮(`ROOTRECALL_MCP_TOOLS` 裁剪 / 介意注入退项目级)同节;决策演化有诚实记录。
-- **`codebase` 参数该传什么名?** → 两套命名:**检索/情报类工具**(search_codebase、blast_radius、call_chain、repo_map、repo_overview、cross_version_diff、merge_eval、when_introduced)传「项目-版本线」名(如 `wpa-v25`,即索引名);**记忆类**(memory_recall / memory_memorize / memory_dump)传「项目名」(如 `wpa`)。原因:记忆按 codebase 标签隔离,传版本名会把教训锁进版本孤岛 —— v20 会话永远翻不到 v25 记下的东西;版本上下文写进 summary / evidence 即可。想裁剪注册的工具数 → `ROOTRECALL_MCP_TOOLS`(见下一条)。
+- **`codebase` 参数该传什么名?** → 两套命名:**检索/情报类工具**(search_codebase、blast_radius、call_chain、repo_map、repo_overview、cross_version_diff、merge_eval)传「项目-版本线」名(when_introduced / validate_patch 等按 repo_path 工作,不吃 codebase 参数)(如 `wpa-v25`,即索引名);**记忆类**(memory_recall / memory_memorize / memory_dump)传「项目名」(如 `wpa`)。原因:记忆按 codebase 标签隔离,传版本名会把教训锁进版本孤岛 —— v20 会话永远翻不到 v25 记下的东西;版本上下文写进 summary / evidence 即可。想裁剪注册的工具数 → `ROOTRECALL_MCP_TOOLS`(见下一条)。
 - **17 个工具全注册太占上下文,能只开一部分吗?** → 能。环境变量 `ROOTRECALL_MCP_TOOLS` 门控注册:预设 `minimal`(find_repo 开仓查表+记忆3+search_codebase+硬门3)/ `research`(find_repo+记忆3+情报8)/ `full`(默认,17 个),或显式逗号清单(如 `memory_recall,validate_patch`)。写在 opencode 的 `mcp.rootrecall.environment` 里即可。没注册的工具不进 tools/list,模型看不见 —— 真省上下文(permission deny 只是调不了,schema 照占位)。
 - **17 个工具各是什么?** → [mcp-tools.md](mcp-tools.md);8 个 skill 怎么选 → [skill-routing-matrix.md](skill-routing-matrix.md);配置项详解 → [configuration.md](configuration.md)。
 

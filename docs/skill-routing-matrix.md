@@ -26,7 +26,7 @@
 按"维度对"拆,每对给判据 —— 两边长得像,但路由结果不同:
 
 **1. upstream-merge vs backport —— 版本线拓扑不同**
-- **upstream-merge**:fork 和上游是**同一个 git 仓**(有共同祖先)。确定性工具能干活:`merge_eval` 用 patch-id 判"已修"、`merge-tree` 判"冲突"。
+- **upstream-merge**:fork 和上游是**同一个 git 仓**(有共同祖先)。确定性工具能干活:`merge_eval` 用 patch-id 判"已修"、`merge-tree` 判"冲突"。⚠️ 血统以 `git merge-base` 为准,不看仓库观感 —— squash / 独立血统的 fork(实测 deepin bluez 长得像同仓 fork 但无共同祖先)会被 `merge_eval` 前置短路并指路:改走 backport 式逐 commit 语义评估。
 - **backport**:v25 和 v20 是**两个独立仓**(无共同祖先,patch-id 失效)。只能语义判:读 v25 fix-point 对照 v20 函数体判"有没有同一个 bug"。这是两者的核心差异,也是 backport 不用 `merge_eval` 的原因。
 
 **2. compare vs backport —— 目的不同**
@@ -55,8 +55,10 @@
 | `repo_overview` | onboarding | 架构层俯瞰(社区/hub/bridge/耦合告警) |
 | `validate_patch` / `fetch_patch` | bug-rca / patch-review / backport | apply 硬门(Tier 0,RootRecall 验的唯一一层) |
 | `merge_eval` | upstream-merge(专用) | 三态判定(patch-id + merge-tree) |
-| `memory_dump` | memory-health-check(专用) | 摊全量记忆出溯源卡 |
-| `cross_version_diff` | (单仓两 ref 场景,skill 层刻不用) | 只对同一个 git 仓的两个 ref 有效,两独立仓无效 |
+| `find_repo` | bug-rca / backport / domain-research / compare / onboarding(仓库就绪第一步) | 「项目+版本」查注册表;未开仓给一步就绪的开仓命令 |
+| `ensure_repo` | compare / onboarding / domain-research(本地没仓时) | 只读 clone 到 data/repos |
+| `memory_dump` | memory-health-check(专用) | 摊全量记忆出溯源卡;空作用域列非空作用域 |
+| `cross_version_diff` | backport(可选辅路) | 只对同一个 git 仓的两个 ref 有效;两独立仓要先 fetch 进同一仓才可用 |
 | `websearch` / `webfetch`(opencode 内置) | domain-research(专用) | 网调权威源,多源交叉 |
 
 ## 四、组合场景(一个问题走多个 skill)

@@ -16,15 +16,15 @@ uv run rootrecall mcp serve --transport http [--host --port]  # warm 长进程,�
 | `stdio`(默认) | agent 每次拉起一个子进程,1:1 生命周期 | 本地单机、opencode 接入(**推荐**,工具注册最可靠) |
 | `http` | 一个常驻进程,多个 agent 共用 | 省冷启动;opencode 需相应配置 |
 
-opencode 的接线(软链、skill、启动目录要求)见 [README](../README.md)「使用」。
+opencode 的接线(全局注册 / 项目级 / 宿主模型复用)见 [README](../README.md)「快速开始」。
 
 ## 默认 codebase 与 per-call 覆盖
 
-server 启动时解析一个**默认 codebase**,顺序:启动参数 `--codebase` → 环境变量 `ROOTRECALL_CODEBASE` → `config.code_index.repo` → 进程所在目录名。
+server 启动时解析一个**默认 codebase**,顺序:启动参数 `--codebase` → 环境变量 `ROOTRECALL_CODEBASE` → `config.code_index.repo` → **唯一注册基线**(2026-08-26 起:本机只注册了一个基线时零配置零传参直接用它)→ 进程所在目录名。注意 config 里**不要再预置占位 repo 名**(曾钉死 `repo: rootrecall` = 永远空的作用域,recall 全 miss 的元凶,已撤)。
 
 多仓场景不用起多个 server:下表标 🔀 的 10 个工具都接受可选 `codebase` 参数,**每次调用**覆盖默认值 —— 同一个会话里可随时切仓。数据层本就按仓隔离(索引一仓一表、记忆按 scope 隔离),per-call 只是解锁调用层。
 
-不需要 `codebase` 参数的 6 个:validate_patch / export_patch / export_report(按绝对 `repo_path` 干活)、when_introduced(同)、fetch_patch(按 URL)、ensure_repo(按名字/URL 解析路径)。
+不需要 `codebase` 参数的 7 个:validate_patch / export_patch / export_report(按绝对 `repo_path` 干活)、when_introduced(同)、fetch_patch(按 URL)、ensure_repo(按名字/URL 解析路径)、find_repo(按「项目+版本」查注册表)。
 
 **近义名容错**(2026-08-25,实测教训:记忆吃项目名 `bluez`、索引/图吃注册名 `bluez-v25`,agent 连败多次才摸到正名):索引/图类工具的 `codebase` 参数按「精确 > 归一化(`_`↔`-`/大小写)> 唯一子串」三级解析 —— 唯一近义命中自动纠偏(输出头注明,如 `codebase 'bluez_v25' 近义解析为 'bluez-v25'`);多个候选则列出全部让 agent 一次改对;完全未知名列出本机已知清单(`rootrecall baseline ls` 同源:注册表 ∪ 索引清单 ∪ 结构图目录)。报错还区分「在册但没建图/索引」(指路 `rootrecall index` 重建)vs「完全未知」(指路 `baseline add`)。记忆三件套(memory_recall/memorize/dump)**不走**这套容错 —— 记忆 scope 吃项目名是既有语义(教训跨版本共享),版本线名留给索引/图工具。
 
@@ -71,7 +71,7 @@ memory_recall(query: str, top_k: int = 5, kind: str | None = None, codebase: str
 
 **general 池并查**(2026-08-26 实测教训:同一条 A2DP 知识一条记 bluez、一条记 general,单池 recall 查一个漏一个):每次 recall 除你传的 codebase 外**总是并查共享 `general` 池**(领域知识所在地),命中按 id 去重、跨池条目前缀 `[general]` 标明;空结果列出非空作用域清单,`codebase` 传错一次就能改对(服务器默认作用域常常是空池)。配套写侧规则:`memorize(kind=domain_knowledge)` **无视传参强制落 general 池**。
 
-**低相关警示**(2026-08-26 标定):RRF 分只反映池内排名一致性(小池子里无关查询也拿满分),真正的语义信号是向量余弦 —— 相关 0.64-0.92 / 无关 0.18-0.28,阈值 0.40。头牌命中 `sim<0.40` 时输出头部会明确劝退(`按 miss 处理,别拿这些条目短路`),低分条目带 `(低相关 0.xx)` 标记但仍可见 —— 只标不删,防「无关查询被当命中」的假秒答。
+**低相关警示**(2026-08-26 标定):RRF 分只反映池内排名一致性(小池子里无关查询也拿满分),真正的语义信号是向量余弦 —— 相关 0.64-0.92 / 无关 0.18-0.28,阈值 0.40。头牌命中 `sim<0.40` 时输出头部会明确劝退(`按 miss 处理,别拿这些条目短路`),低分条目带 `(低相关 0.xx)` 标记但仍可见 —— 只标不删,防「无关查询被当命中」的假秒答;劝退行同时附非空作用域清单(2026-08-26:真 miss 分支因 general 恒并查永不触发,这里是体检 / 多仓场景唯一能暴露记忆分布的出口)。
 
 ### memory_memorize
 
@@ -109,7 +109,7 @@ memory_dump(kind=None, include_invalid=False, codebase=None, limit=60, offset=0)
 | `limit` / `offset` | 分页,默认每页 60 条。header 会明示「showing 1-60 of N」—— 体检要全量,按提示翻页,别只审一片切片 |
 | `codebase` 🔀 | 覆盖看哪个仓的记忆 |
 
-每条渲染成溯源卡:置信度 / 来源档 / evidence file:line / commit_sha / 双时间戳(失效标 STALE、被纠正标 CORRECTED)/ 被召回次数 / 条目 id。header 附健康概览(治理标签计数:待复核 / 已合入上游 / 长期未翻)。
+每条渲染成溯源卡:置信度 / 来源档 / evidence file:line / commit_sha / 双时间戳(失效标 STALE、被纠正标 CORRECTED)/ 被召回次数(**恒显,含 0** —— 0 和「字段缺失」对体检是不同信号)/ Web 出处 source_url(截 60)/ 条目 id。header 附健康概览(治理标签计数:待复核 / 已合入上游 / 长期未翻)。**空作用域自动列出非空记忆作用域**(2026-08-26:默认 scope 落空时一步找到记忆在哪,不用逐名试 dump)。
 
 ## 代码情报(8 个)
 
@@ -143,7 +143,7 @@ search_codebase(query: str, top_k: int = 5, codebase: str | None = None) -> str
 blast_radius(changed_files: list[str], codebase: str | None = None) -> str
 ```
 
-给一组被改文件,返回还会波及谁(caller / callee / 依赖方,结构图 BFS)。评估补丁 / PR 影响面用。文件路径传仓库相对或绝对都行(内部做后缀解析容错)。需结构图;未建返回带建法提示的可操作串。
+给一组被改文件,返回还会波及谁(caller / callee / 依赖方,结构图 BFS)。评估补丁 / PR 影响面用。文件路径传仓库相对或绝对都行(内部做后缀解析容错)。需结构图;未建返回带建法提示的可操作串。**粒度提示**(2026-08-26 实测:player.c 这类 core 模块文件级 BFS 出数百节点,对决策零鉴别力):头部带「输入 X 文件 → 波及 Y 节点 / Z 文件」计数,波及面过大(图侧截断 / >50 节点 / 正文超限)时明说「文件级视图对 core 模块无鉴别力」并指路改用 `call_chain(symbol=…, direction=callers)` 定点。
 
 ### call_chain
 
@@ -213,7 +213,7 @@ merge_eval(upstream_base_ref: str, upstream_head_ref: str, fork_ref: str, repo_p
            concern_files=None, max_commits=50, codebase=None) -> str
 ```
 
-维护 fork 时的逐 commit 三态判定:`already_fixed`(fork 里已有 patch-id 等价提交)/ `recommend_merge`(没合过、能干净合)/ `conflict`(合不干净);另有 `uncertain` 兜底。冲突检查用 `git merge-tree --write-tree`(git 2.38+)在对象库完成,**零 touch 工作树** —— 不需要 checkout、不要求干净树;老 git 自动回退 `git apply --check` 并在 note 里声明三态可能失真。
+维护 fork 时的逐 commit 三态判定:`already_fixed`(fork 里已有 patch-id 等价提交)/ `recommend_merge`(没合过、能干净合)/ `conflict`(合不干净);另有 `uncertain` 兜底。冲突检查用 `git merge-tree --write-tree`(git 2.38+)在对象库完成,**零 touch 工作树** —— 不需要 checkout、不要求干净树;老 git 自动回退 `git apply --check` 并在 note 里声明三态可能失真。**无共同祖先前置短路**(2026-08-26 实测:squash/独立血统的 fork,如 deepin bluez,会让 merge-tree 拒绝合并、patch-id 失参照,逐 commit 全 uncertain 零信号):入口先探 `git merge-base`,没有共同祖先直接返回空表 + 指引「改走逐 commit 语义评估(git show 读 diff + 对照 fork 判有没有这 bug),标准参照 backport」—— note 提到正文首行,不埋 JSON。
 
 两个边界:① 上游要先 fetch 进本仓让 ref 可解析(agent 自己跑 `git remote add + fetch`,工具不做);② 「能不能合」是确定性地板,**「该不该合」(fork 是否真有这个 bug)是语义判断**,用触及文件 + search_codebase + call_chain 综合评估。
 
@@ -240,10 +240,10 @@ when_introduced(repo_path: str, symbol: str | None = None, file: str | None = No
 ### validate_patch
 
 ```python
-validate_patch(patch: str, repo_path: str) -> str
+validate_patch(patch: str, repo_path: str, worktree: bool = False) -> str
 ```
 
-正向 `git apply --check`(strict → `--3way` → `patch -p1` 逐级降级),返回能否干净 apply + 方法 + git 诊断。只做正向、只验 apply(Tier 0):**不保证补丁语义对** —— 语义靠读码推理 + 真机验证。入口已对传参做换行归一化(防 agent 传参时 rstrip 掉末尾换行造成「补丁损坏」误判)。
+正向 `git apply --check`(strict → `--3way` → `patch -p1` 逐级降级),返回能否干净 apply + 方法 + git 诊断。只做正向、只验 apply(Tier 0):**不保证补丁语义对** —— 语义靠读码推理 + 真机验证。入口已对传参做换行归一化(防 agent 传参时 rstrip 掉末尾换行造成「补丁损坏」误判)。**worktree 模式**(2026-08-26):`worktree=True` 验证的是 repo **当前未提交改动**的自洽性 —— 自取 `git diff HEAD`(含已暂存)做 reverse `--check`(树已含改动,正向必失败,反向过 = diff 与树状态一致且可干净撤回)。改完工作树后、export_patch 前调,免手搓 bash 反向 apply;空 diff 拒验并区分「没改 / 改的是 untracked / 指错树」,检出 untracked 新文件与 `.pc/` 构建产物给警示。
 
 ### export_patch
 
@@ -266,7 +266,7 @@ export_report(content: str, repo_path: str, out_dir: str = "data/bug_rca", agent
 | `topic` | 主题短 slug(如 `connect-flow-compare` / `a2dp-protocol` / `bug-1234`)→ 文件名 `<repo>-<topic>-rca.md`。**同仓多主题报告必传** —— 不传共用 `<repo>-rca.md` 会互相覆盖(2026-08-26 实测:A2DP 报告盖掉连接流程对比报告);同 topic 重跑 = 幂等覆盖并注明。省略 = 旧文件名(向后兼容) |
 | `agents_md` | 额外把报告蒸馏成 `<repo_path>/AGENTS.md`(「给 agent 看的 README」,opencode / claude code / cursor 原生读取)。**默认关** —— 不问不写进使用者的仓;仓里已有 AGENTS.md 时拒写不覆盖 |
 
-空 / 空白内容拒写。何时调同 export_patch:**用户开口要报告才调**(通常在真机验证通过后,迭代中不自动写)。检出带 bug 号时按 `<bug号>/` 双写归档。建议顺序:export_patch → memory_memorize → export_report(报告引用前两步的路径与 id,闭环才完整)。
+空 / 空白内容拒写;**占位报告同样拒写**(2026-08-26 实测:「先落盘占位、内容回头补」的 TBD 模板穿透过只查空串的旧守卫):有效内容 <200 字符、或占位标记行(TBD/待补/占位等)密度 ≥0.4 都拒 —— 报告是交付物,要么真写完,要么不落盘。何时调同 export_patch:**用户开口要报告才调**(通常在真机验证通过后,迭代中不自动写)。检出带 bug 号时按 `<bug号>/` 双写归档。建议顺序:export_patch → memory_memorize → export_report(报告引用前两步的路径与 id,闭环才完整)。
 
 ## PR 抓取(2 个)
 

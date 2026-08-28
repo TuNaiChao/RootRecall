@@ -113,7 +113,7 @@ RootRecall 的记忆模块就是给 agent 装一本**跨会话、能自己变聪
 2. **连图边** `_link_related`:找同 scope 内 evidence 文件有交集的现有项 → 填 `related`(便宜有用)
 3. **合并 / 冲突** `_merge_on_remention` —— 见第 6 节
 4. **纠正链**:新条若声明 `corrects` → `mark_corrected` 回填旧条 `corrected_by`
-5. **upsert** 入库([store.py:417](../src/rootrecall/services/memory/backends/native/store.py#L417))
+5. **upsert** 入库([store.py:417](../src/rootrecall/services/memory/backends/native/store.py#L417))。写侧还有一条硬规则(2026-08-26 实测教训):`kind=domain_knowledge` **无视传参强制落 general 共享池**(工具层改写并注明原传值)—— 领域知识按当时代码库上下文随手记进项目池,会让别的会话 recall 查一个漏一个。
 
 **置信度怎么算**(Bayes 累加,借 mnemopi):新条初始 = tier_weight · 0.5;重提同事实时 `conf += (1-conf)·tier·step`(step=0.3,封顶 1.0)。cur 越接近 1 增量越小(饱和);tier 越可信权重越大。
 
@@ -158,7 +158,7 @@ MCP 入口 `memory_memorize` 带 `verification` 参数(2026-08-20,真 e2e 发现
   top-k(每条带 溯源 + 置信度 + 时间戳,注入提示词)
 ```
 
-命中的 memory 条顺手 `bump_access`(access_count++,升级 mental_model 的依据),并后台 fire-and-forget 跑一次 consolidate(自动巩固)。
+命中的 memory 条顺手 `bump_access`(access_count++,升级 mental_model 的依据),并后台 fire-and-forget 跑一次 consolidate(自动巩固)。工具层(MCP 入口)在读路径之上叠了三个护栏(各来自一条实测坑):**并查 general 池**(领域知识所在,跨池命中带 `[general]` 前缀);**低相关劝退**(向量路原始余弦挂在每条命中上,头牌 <0.40 时明确「按 miss 处理」,防无关查询被小池排名当命中);**空结果 / 劝退时列非空作用域**(默认 scope 落空时一步找到记忆在哪)。
 
 **向量检索的渐进式设计**:count(scope) ≤ 500 走 Python 逐行 cosine(小规模更快);> 500 切 sqlite-vec vec0 KNN(C 扩展,快 2-4×)。加载失败降级纯 loop。契约不变,recall 无感。
 

@@ -28,6 +28,8 @@ models:
 
 **加新 provider = 加一项**:换 `use` 指向对应类即可(`langchain_anthropic:ChatAnthropic`、`langchain_ollama:ChatOllama`……),不用动代码。配置里留有 Anthropic / Ollama 的注释模板可直接打开。
 
+**从 opencode 宿主复用**(2026-08-28):`uv run rootrecall opencode-models --adopt <provider>/<model>` 会在本文件末尾生成 `models_from_opencode:` 标记段(只含 provider/model/name,**key 不落盘**,加载时从宿主 auth.json 现读);任意模型项的 `api_key` 也可写 `$opencode:<provider>` token。详见 [CLI 参考](cli.md)的 opencode-models 节。
+
 ## model_roles — 角色 → 模型路由
 
 把「任务角色」映射到模型,改路由零代码:
@@ -61,7 +63,8 @@ sandbox:
 
 ```yaml
 code_index:
-  repo: rootrecall
+  # repo: <索引名>   # 默认检索库 —— 建议不预置:不配时走智能默认(env > 唯一注册基线 > 进程目录名);
+  #                    曾钉死占位名 rootrecall(安装根名)= 永远空的作用域,recall 全 miss 的元凶,已撤
   embedding:
     provider: openai_compatible   # openai_compatible(远端,默认)| sentence_transformers(本地)
     base_url: $DASHSCOPE_BASE_URL # 换 SiliconFlow / OpenAI / 自建 vLLM 只改这行
@@ -221,11 +224,11 @@ quickstart 检测到未配 `DASHSCOPE_API_KEY` 会打印上面 a/b 两条路的�
 
 | 环境变量 | 用途 | 哪些功能要 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | LLM(默认模型) | 全部(必填) |
+| `DEEPSEEK_API_KEY` | LLM(默认模型) | chat 消费用;**可被宿主桥接替代**(`opencode-models` 采纳宿主模型后无需此 key) |
 | `DASHSCOPE_API_KEY` | embedding + reranker | 检索类工具(必填) |
 | `DASHSCOPE_BASE_URL` | embedding 端点(专属 MaaS 加速;留空走公共 `dashscope.aliyuncs.com`) | 可选;`.env.example` 团队默认已填 |
 | `DASHSCOPE_RERANK_URL` | reranker 端点(同上) | 可选;`.env.example` 团队默认已填 |
-| `GITHUB_TOKEN` | GitHub PR 抓取 | fetch_patch / patch-report(建议) |
+| `GITHUB_TOKEN` | GitHub PR 抓取 | fetch_patch(建议;匿名可用但限速) |
 | `GERRIT_USERNAME` / `GERRIT_HTTP_PASSWORD` | Gerrit 私仓 | fetch_patch 抓 Gerrit 时 |
 
 一键配置脚本 `scripts/quickstart.sh` 会交互式引导前两个必填 key 的填写(输入不回显、不打印值)。
