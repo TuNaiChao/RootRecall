@@ -1,5 +1,6 @@
 # Memory Index
 
+- [优化路线图交接](optimization-roadmap-handoff.md) — **2026-09-01 纯规划未动代码,11 项三阶段后续计划(开工卡)**:①CI ②图系工具与 embedder 解耦(--graph-only,零 key 解锁 4 工具) ③记忆向量 backfill(阶段一);④e2e 回归 eval harness(L2 进 CI/L3 workflow) ⑤consolidate ANN 预筛+timer ⑥seed 冷启动 ⑦双轨清理轻档(阶段二);⑧HyDE ⑨migration 框架 ⑩脱敏 ⑪多用户 B 档(择机)。含已核实 file:line 锚点(cli.py:138 embedder 连坐图构建/memorize.py:46 无补嵌/consolidate.py:158·188 O(n²))免新会话重探;依赖链 ①→④L2→⑧;明确不做 Neo4j/物理删除。
 - [Multica 接入调研](multica-integration-research.md) — 2026-08-20 源码定稿+探针全绿(self-host v0.3.34):可接零改动;RCA 根因=金标、评论生成补丁 53 行落盘、session 续接实测;坑:daemon 缺 {env:UNIONTECH_AI_API_KEY}→agent env set 修(#34 家族);别用姿势③接线的仓;全文 docs/research/multica/。
 - [Hyperion 项目总览](agent-project-overview.md) — v2 调度型 agent(编排+记忆+委托);三支柱 P1 调研/P2 bug-RCA★MVP/P3 记忆★特色;⚠️ R4/R5 已 2026-08-07 取消,见 [路线复核](harness-route-review-2026-08-07.md)。
 - [README 只保留 opencode 接入](opencode-only-positioning.md) — 2026-08-17 用户定:去 codex/claude code 配置描述(暂不适配)+ quickstart.sh 一键配置(setup.sh→.env 交互→models→可选 index→接线自检;幂等,密钥不回显);2026-08-18 全局注册方案拍板**先不做**(每会话常驻 16 工具过路费),方案记档 docs/mcp-guide.md 姿势③。
