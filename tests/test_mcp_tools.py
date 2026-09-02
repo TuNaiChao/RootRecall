@@ -717,6 +717,17 @@ def test_search_codebase_per_call_codebase(monkeypatch):
     """
     monkeypatch.setattr("rootrecall.services.repos.registry.known_codebases",
                         lambda: {"nonexistent_xyz_cb_42": {"index"}})
+
+    class _StubEmbedder:
+        def embed_query(self, query: str) -> list[float]:
+            return [0.0]
+
+    # 桩掉检索两件套:RemoteEmbedder/RemoteReranker 构造期就要 api_key(CI 无 .env 会抛,
+    # 本机带 .env 时曾因此漏网);本用例只验 per-call 覆盖 + 表空指路,短路在 embed/rerank 之前。
+    monkeypatch.setattr("rootrecall.services.code_index.embed.create_embedder",
+                        lambda cfg: _StubEmbedder())
+    monkeypatch.setattr("rootrecall.services.code_index.retrieval.create_reranker",
+                        lambda cfg: None)
     mcp = build_server()
     out = _call(mcp, "search_codebase",
                 {"query": "p2p scan routing", "codebase": "nonexistent_xyz_cb_42"})

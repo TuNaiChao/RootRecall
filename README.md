@@ -2,7 +2,7 @@
 
 > *Light on every root cause.*
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/) [![uv](https://img.shields.io/badge/uv-managed-orange)](https://docs.astral.sh/uv/)
+[![CI](https://github.com/TuNaiChao/RootRecall/actions/workflows/ci.yml/badge.svg)](https://github.com/TuNaiChao/RootRecall/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/) [![uv](https://img.shields.io/badge/uv-managed-orange)](https://docs.astral.sh/uv/)
 
 给系统软件代码库(C 为主,如 wpa_supplicant / bluez)做「带记忆的 bug 根因定位 + 深度调研」的 MCP tool/skill server。读码、改代码等重活由 opencode 承担,RootRecall 负责召回与组装精确上下文、提供工具和标准流程、沉淀并检索记忆。
 

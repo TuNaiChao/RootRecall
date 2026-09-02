@@ -1,0 +1,52 @@
+# RootRecall CI:lint + test 两 job。
+# - 单版本 Python 3.12(requires-python >=3.12,无需 matrix);
+# - 依赖按 uv.lock 冻结安装(--frozen),锁与 pyproject 脱节时直接失败,不在 CI 上静默重解析;
+# - test 的两个 extra 是必须的:code-review-graph(图系测试)/ mcp(test_mcp_tools 的 33 个
+#   用例经 build_server 用到 FastMCP);embedding-local 不进 CI(拉 torch ~800MB 还要下模型)。
+# - setup-uv 自 v8 起 tag 不可变,钉完整版本号 v10.0.1。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          # 只按根 uv.lock 算缓存 key(默认 glob 会递归扫整棵树的 pyproject/uv.lock)。
+          cache-dependency-glob: "uv.lock"
+
+      - name: Ruff
+        run: |
+          uv sync --frozen
+          uv run ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pytest
+        run: |
+          uv sync --frozen --extra code-review-graph --extra mcp
+          uv run pytest -q

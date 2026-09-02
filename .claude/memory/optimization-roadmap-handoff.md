@@ -39,9 +39,10 @@ metadata:
 
 ### 阶段一·地基(合计约 3 天,三项互相独立可并行)
 
-**① CI(GitHub Actions),0.5–1 天**
-- 一个 `ci.yml` 两 job:lint(ruff check + format --check)/ test(Python 3.12 单版本,`uv sync --extra code-review-graph`,`uv run pytest -q`);缓存 `~/.cache/uv`。
-- 验收:push 后 Actions 绿、PR 自动跑、README 徽章。**先实证**测试在无 .env、无宿主 opencode 的干净环境全绿(test_opencode_bridge 已 monkeypatch 隔离,应无问题但要跑过才算)。
+**① CI(GitHub Actions),0.5–1 天 —— ✅ 已成(2026-09-02,待 commit/push 后 Actions 首绿)**
+- 一个 `ci.yml` 两 job:lint(ruff check)/ test(Python 3.12 单版本,`uv sync --frozen --extra code-review-graph --extra mcp`,`uv run pytest -q`);setup-uv@v10.0.1 `enable-cache`(v8 起 tag 不可变须钉全版本号),checkout@v7。
+- **落地时三处修正(均经 git worktree 干净环境实证,2026-09-02)**:① test job 必须加 `--extra mcp` —— test_mcp_tools 33 用例经 build_server 用 FastMCP(mcp_memory.py:365 函数内 import),只装 code-review-graph 会运行时 ModuleNotFoundError;② lint 只跑 `ruff check` 不跑 `format --check` —— 仓库从未 format 过,src 58 + tests 34 共 92 文件漂移,加进去 CI 立刻红(是否一次性 `ruff format` 收编待用户拍板);③ `test_search_codebase_per_call_codebase` 隐性依赖真机 .env(embedder/reranker 构造期要 api_key)→ 已桩掉两件套修复,干净环境 413 全绿、本机复测亦绿。
+- 验收:push 后 Actions 绿、PR 自动跑、README 徽章(已加;badge 在 workflow 落到 GitHub main 前会 404,属预期)。
 
 **② 图系工具与 embedder 解耦(性价比最高),1–1.5 天**
 - `rootrecall index <repo> --graph-only`(跳过 embedder 与向量索引只建图);零 key 指路文案加第三条路;`baseline add` 零 key 时建图不被连坐;核实 4 图系工具(blast_radius/call_chain/repo_map/repo_overview)运行路径确实零 embedder。
