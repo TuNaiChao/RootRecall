@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-前置:[opencode](https://opencode.ai) 已安装并配过一次默认模型;机器上有 [uv](https://docs.astral.sh/uv/)。密钥两条路任选:chat 模型直接**复用 opencode 宿主配置**(`uv run rootrecall opencode-models` 一键采纳,url/key 运行时读宿主、不落盘),或自己配 `DEEPSEEK_API_KEY`;embedding 用 `DASHSCOPE_API_KEY`(没有也能跑最小模式,见 [configuration.md](docs/configuration.md));抓 GitHub PR 的 `fetch_patch` 匿名可用但限速,要稳定可配 `GITHUB_TOKEN`(见 `.env.example`)。
+前置:[opencode](https://opencode.ai) 已安装并配过一次默认模型;机器上有 [uv](https://docs.astral.sh/uv/)。密钥两条路任选:chat 模型直接**复用 opencode 宿主配置**(`uv run rootrecall opencode-models` 一键采纳,url/key 运行时读宿主、不落盘),或自己配 `DEEPSEEK_API_KEY`;embedding 用 `DASHSCOPE_API_KEY`(没有也能跑最小模式:图系工具经 `index --graph-only` 可用、其余降级见 [configuration.md](docs/configuration.md));抓 GitHub PR 的 `fetch_patch` 匿名可用但限速,要稳定可配 `GITHUB_TOKEN`(见 `.env.example`)。
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh   # 安装uv. 装完新开一个终端,uv 才在 PATH 里

@@ -13,7 +13,7 @@
 | [`install`](#install--here) | **日常** | opencode 全局注册/卸载(任意目录免接线) |
 | [`index`](#index) | 进阶 | 给仓库建索引(向量 + 结构图;`--seed` 播种增量)—— `baseline add` 的底层 |
 | [`repo`](#repo) | 进阶 | 仓库注册表与生命周期:ls / register / resolve / checkout / sync / gc —— `baseline` 家族的底层 |
-| [`memory`](#memory) | 进阶 | 记忆管理:recall / add / ingest / list / consolidate / invalidate |
+| [`memory`](#memory) | 进阶 | 记忆管理:recall / add / ingest / list / consolidate / invalidate / backfill |
 | [`mcp serve`](#mcp-serve) | 进阶 | 启动 MCP server(17 个工具的入口) |
 | [`models`](#models) | 进阶 | 列出配置的模型 + 角色路由(验证配置) |
 | [`lsp`](#lsp) | 进阶 | L2 精确导航(clangd)自检 / 冒烟 |
@@ -29,7 +29,8 @@ uv run rootrecall baseline add ~/codebases/v25/bluez       # → 基线 bluez-v2
 uv run rootrecall baseline add ~/codebases/upstream/bluez  # → 基线 bluez-upstream
 uv run rootrecall baseline add ~/codebases/systemd         # → 基线 systemd
 #   默认名 = 相对总目录的路径**倒序**连 '-'(v20/bluez → bluez-v20;直接子目录 systemd → systemd)
-#   --name 覆盖;--force 全量重建;--no-graph 只建向量索引(快);重跑 = upsert + 增量刷新(幂等)
+#   --name 覆盖;--force 全量重建;--no-graph 只建向量索引(快);--graph-only 只建结构图(零 key 可用);
+#   零 key 不加开关时向量路诚实跳过、结构图照建;重跑 = upsert + 增量刷新(幂等)
 #   非 git 仓拒绝(基线的 checkout/sync 都依赖 git);没 remote 也登记,但 sync 不可用(提示补 url)
 
 # 同步:fetch→ff→增量刷索引→(可选)上游三态分析报告;缺省=全部基线(幂等,给定时器反复跑)
@@ -62,7 +63,7 @@ uv run rootrecall baseline ls      # 全机资产一览(基线/检出/未管理)
 给代码仓建索引 —— 检索类工具(search_codebase / blast_radius / call_chain / repo_map / repo_overview)的前置;日常直接用 `baseline add`(内部就是它)。
 
 ```bash
-uv run rootrecall index <repo_path> [repo_name] [--force] [--seed <基线索引名>] [--no-graph]
+uv run rootrecall index <repo_path> [repo_name] [--force] [--seed <基线索引名>] [--no-graph | --graph-only]
 ```
 
 | 参数 | 说明 |
@@ -72,7 +73,9 @@ uv run rootrecall index <repo_path> [repo_name] [--force] [--seed <基线索引�
 | `--force` | 强制全量重建 |
 | `--seed` | 从同线基线索引播种:拷贝向量库+manifest(+结构图)再走增量,**只重嵌差异文件**(小版本索引省 95%+ 嵌入费;目标已存在则跳过拷贝) |
 | `--no-graph` | 只建向量索引不建结构图(快;图系工具将不可用) |
+| `--graph-only` | 只建结构图,**不碰 embedder 与向量索引**(零 key 可用;search_codebase 将不可用)。与 `--no-graph` 互斥 |
 
+零 key(没配 embedding key)时向量路诚实跳过、**结构图照建不再连坐**(等价自动走 `--graph-only`,rc=2 提示向量未建,指三条路:配 key 重跑增量补建 / 切本地 embedding / 只用结构图)。
 结构图需要 `uv sync --extra code-review-graph`;没装会非致命降级(向量索引照建,提示装法)。
 
 重跑语义:两条索引都增量 —— 向量按 manifest 只重嵌改动文件(重嵌前先清该文件的旧行,符号改名不留重复行;已删除的文件行也会被清掉);结构图按 `built_head` 快照只重解析改动 + 未跟踪新增的文件(社区按需重检测),无改动直接跳过。补丁打进工作区或合入后,重跑本命令刷新即可;`--force` 才全量重建(图拿不准的场合也会自动退回全量)。
@@ -212,6 +215,17 @@ uv run rootrecall memory invalidate <id> [--reason "..."] [--repo X]     # 失�
 ```
 
 `consolidate` 给 `--repo-path` 才做「补丁已合入上游」检测(要跑 git 对账)。
+
+### backfill — 补嵌零 key 期间写入的记忆
+
+```bash
+uv run rootrecall memory backfill [--repo X] [--dry-run]
+```
+
+零 key 期间 `memorize` 写入的条目无向量(只走 BM25 检索);配好 embedding key 后跑一次
+backfill 即补嵌:**只更新向量列**(不触发置信度累加 / 合并),按 embedder 的 batch 分批嵌、
+整批一提交,幂等可重跑(重复跑零变更)。`--dry-run` 只列待补条目。embedder 不可用时诚实
+报错指路(见「最小模式」)。
 
 ## mcp serve(进阶)
 

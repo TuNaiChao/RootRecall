@@ -44,14 +44,17 @@ metadata:
 - **落地时三处修正(均经 git worktree 干净环境实证,2026-09-02)**:① test job 必须加 `--extra mcp` —— test_mcp_tools 33 用例经 build_server 用 FastMCP(mcp_memory.py:365 函数内 import),只装 code-review-graph 会运行时 ModuleNotFoundError;② lint 只跑 `ruff check` 不跑 `format --check` —— 仓库从未 format 过,src 58 + tests 34 共 92 文件漂移,加进去 CI 立刻红(是否一次性 `ruff format` 收编待用户拍板);③ `test_search_codebase_per_call_codebase` 隐性依赖真机 .env(embedder/reranker 构造期要 api_key)→ 已桩掉两件套修复,干净环境 413 全绿、本机复测亦绿。
 - 验收:push 后 Actions 绿、PR 自动跑、README 徽章(已加;badge 在 workflow 落到 GitHub main 前会 404,属预期)。
 
-**② 图系工具与 embedder 解耦(性价比最高),1–1.5 天**
-- `rootrecall index <repo> --graph-only`(跳过 embedder 与向量索引只建图);零 key 指路文案加第三条路;`baseline add` 零 key 时建图不被连坐;核实 4 图系工具(blast_radius/call_chain/repo_map/repo_overview)运行路径确实零 embedder。
-- 文档同步:configuration.md 最小模式表把「检索类不可用」拆细为「search_codebase 不可用;图系 4 工具经 --graph-only 可用」+ README。
-- 验收:拔 key 复测——`index --graph-only` 后 4 图系工具可用、search_codebase 诚实指路;全 key 环境零变化(回归)。
+**② 图系工具与 embedder 解耦(性价比最高),1–1.5 天 —— ✅ 已成(2026-09-02)**
+- `rootrecall index <repo> --graph-only`(跳过 embedder 与向量索引只建图,`baseline add` 也有同参);零 key 不加开关时向量路诚实跳过但**图照建不再连坐**(rc=2 提示向量未建,指路文案三条路);`--no-graph` 与 `--graph-only` 互斥检查;播种分路(向量播种仅在 embedder 可用时,图播种不受影响);checkout --index 经 cmd_index 漏斗自动受益。
+- 核实落定:4 图系工具(blast_radius/call_chain/repo_map/repo_overview)全走 `CodeGraph.open`,零 embedder。
+- 文档同步:configuration.md 最小模式表拆细(新增「零 key 只用结构图」档)+ README 首段 + cli.md。
+- 验收(2026-09-02 干净 worktree 拔 key 实测):`index --graph-only` 后 4 图系工具返真实图数据、search_codebase 诚实指路缺 key、零 key 裸跑 rc=2 图照建;全 key 回归 417 测全绿(413+4 新单测 tests/test_cli_index_graph_decouple.py)、ruff clean。
 
-**③ 记忆向量 backfill,0.5 天**
-- CLI `rootrecall memory backfill [--repo X] [--dry-run]`:扫 active 且 embedding 空的条目→按 batch_limit 批量嵌→只更新向量列(不触发 Bayes/合并)。幂等可重跑。quickstart/零 key 指路加一句「配 key 后跑一次 backfill」。
-- 验收:零 key 记 N 条→配 key→backfill→纯语义查询(不含关键词)能从向量路命中;重复跑零变更。
+**③ 记忆向量 backfill,0.5 天 —— ✅ 已成(2026-09-03)**
+- CLI `rootrecall memory backfill [--repo X] [--dry-run]`:扫 active 且 embedding 空的条目→`embed_texts`(新加的 Embedder 公共批量接口,按 batch_limit 分批)→`store.update_embeddings`(**只 UPDATE 向量列** + 同事务双写 vec0,不碰置信度/时间戳,天然不触发 Bayes/合并)。幂等可重跑;单批 API 失败跳过不阻断;零 key 诚实报错指路(dry-run 同)。quickstart/零 key 指路/configuration.md 已加「配 key 后跑一次 backfill」。
+- 验收(单测 + 真 API e2e 双验,2026-09-03):单测(fake embedder,中英零共同 token)补嵌前纯语义查询空、补嵌后 top-1 命中、重跑 0/0 且置信度/valid_at 不动;真 e2e(worktree 拔 key 记 2 条→source .env→backfill)「handsfree call establishment」top-1 命中「车载免提通话链路的建立流程」(Qwen3 真跨语言语义),重跑零变更。顺带抓修 CLI dry-run 分支没接 ValueError 的 bug。4 新测,全量 421 绿。
+
+**阶段一(①②③)至此全部完成;下一步:④ eval-L2(⑧ 的前置)。**
 
 ### 阶段二·质量与体验(合计约 8–12 天)
 

@@ -71,8 +71,9 @@ if ! grep -q '^DASHSCOPE_API_KEY=..' .env 2>/dev/null; then
   echo '     a) 零 key 本地档:`uv run uv sync --extra embedding-local` + config.yaml 把'
   echo "        embedding.provider 切 sentence_transformers、reranker.provider 设 off"
   echo "        (模型经 hf-mirror 本地下载,索引/检索全功能,数据不出本地)"
-  echo "     b) 暂不建索引:记忆(recall/memorize)与仓库管理(repo register/checkout)可用,"
-  echo "        检索类工具(search_codebase 等)等补 key 再建 —— 详见 docs/configuration.md「最小模式」"
+  echo "     b) 暂不建索引:记忆(recall/memorize)与图系工具(index --graph-only)、仓库管理(repo"
+  echo "        register/checkout)可用;之后配了 key,跑一次 \`uv run rootrecall memory backfill\`"
+  echo "        补嵌这期间写的记忆,重跑 index 补建向量 —— 详见 docs/configuration.md「最小模式」"
 fi
 
 # ── [3/7] 验证配置 + 模型工厂加载(models 只查非空,不打印 key 值)────────

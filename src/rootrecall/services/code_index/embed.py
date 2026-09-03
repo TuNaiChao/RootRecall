@@ -143,6 +143,14 @@ class Embedder(Protocol):
         """编码单条查询 → (dim,) 向量(不加任何头)。"""
         ...
 
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        """批编码一批纯文本 → (N, dim) 矩阵(内部按 batch_limit 分批;不加任何头)。
+
+        与 embed_chunks 的区别:入参是裸文本,不做 chunk 头拼接 —— 记忆 backfill
+        (零 key 期间写入的条目补嵌)等非代码场景用。
+        """
+        ...
+
     def warm(self) -> None:
         """预热:触发首次连接/加载,避免首次检索被惰性初始化卡一下。"""
         ...
@@ -227,6 +235,19 @@ class RemoteEmbedder:
         self._dim_cache = arr.shape[0]
         return _normalize(arr) if self._normalize else arr
 
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.asarray([], dtype=np.float32)
+        m = self._max_input_chars  # 与 embed_chunks 同款超长防御(单条超限整批 400)
+        if m:
+            texts = [t[:m] for t in texts]
+        vecs: list[list[float]] = []
+        for i in range(0, len(texts), self._batch_limit):
+            vecs.extend(self._raw_embed(texts[i : i + self._batch_limit]))
+        arr = np.asarray(vecs, dtype=np.float32)
+        self._dim_cache = arr.shape[1]
+        return _normalize(arr) if self._normalize else arr
+
     def warm(self) -> None:
         """预热:发一条探测请求,建立 HTTP 连接 + 触发鉴权(顺便缓存 dim)。"""
         _ = self.dim
@@ -295,6 +316,16 @@ class LocalEmbedder:
         if self._query_instruction:
             kwargs["prompt_name"] = self._query_instruction  # Qwen3 查询端 prompt
         return self._model.encode([query], **kwargs)[0]
+
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.asarray([], dtype=np.float32)
+        return self._model.encode(
+            texts,
+            batch_size=self._batch_size,
+            normalize_embeddings=self._normalize,
+            show_progress_bar=False,
+        )
 
     def warm(self) -> None:
         self.embed_query("warmup")

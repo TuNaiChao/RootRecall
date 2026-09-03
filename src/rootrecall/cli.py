@@ -81,6 +81,13 @@ def cmd_opencode_models(args) -> int:
     return 0
 
 
+def _vector_status(embedder) -> str:
+    """图路异常提示里向量路的状态一句:零 key / --graph-only 时不谎报「已就绪」。"""
+    if embedder is not None:
+        return "向量索引已就绪(search_codebase 可用)"
+    return "向量索引未建(零 key / --graph-only;search_codebase 不可用)"
+
+
 def cmd_index(args) -> int:
     """为一个代码仓库建/更新索引 —— 向量索引 + 结构图一次到位(P1 代码理解服务)。
 
@@ -92,10 +99,12 @@ def cmd_index(args) -> int:
 
     默认建两样(代码情报工具全都要预建):
     - 向量索引 → search_codebase(BM25 + 向量 + RRF + rerank)
-    - 结构图   → blast_radius / call_chain / repo_map(CRG tree-sitter 解析 + Leiden 社区)
-    `--no-graph` 只建向量索引(快);CRG(code-review-graph extra)没装则自动跳过结构图并提示,
-    不挡向量索引。已建的结构图默认**增量刷新**(补丁打进/合入后重跑本命令即可,只重解析改动
-    文件;拿不准的场合自动退回全量),`--force` 才强制全量重建。
+    - 结构图   → blast_radius / call_chain / repo_map / repo_overview(CRG tree-sitter 解析 + Leiden 社区)
+    `--no-graph` 只建向量索引(快);`--graph-only` 反向:只建结构图,不碰 embedder 与向量索引
+    (零 key 可用,图系 4 工具不依赖向量)。零 key(没配 embedding key)时向量路诚实跳过、
+    **结构图照建不再连坐**(等价自动走 --graph-only,rc=2 提示向量未建);CRG(code-review-graph
+    extra)没装则自动跳过结构图并提示,不挡向量索引。已建的结构图默认**增量刷新**(补丁打进/
+    合入后重跑本命令即可,只重解析改动文件;拿不准的场合自动退回全量),`--force` 才强制全量重建。
     """
     import shutil
     from pathlib import Path
@@ -114,45 +123,66 @@ def cmd_index(args) -> int:
     vs_path = reanchor_data_path(
         getattr(getattr(cfg.code_index, "vector_store", None), "path", "data/code_index"))
 
+    graph_only = bool(getattr(args, "graph_only", False))  # checkout --index 等旧调用方不传此参
+    if graph_only and args.no_graph:
+        print("错误:--graph-only(只建图)与 --no-graph(只建向量)互斥,两开等于什么都不建。",
+              file=sys.stderr)
+        return 2
+
+    # ── 1)embedder 前置判定:--graph-only 显式跳过;零 key 诚实降级为只建图 ──
+    # (2026-09-02 图解耦:此前零 key 在这里 return 2 短路,结构图排在后面被连坐 —— 图系
+    #  4 工具零 embedder,不该陪葬。zero_key_rc 让调用方仍知道向量路没建成。)
+    zero_key_rc = 0
+    embedder = None
+    if graph_only:
+        print("向量索引:--graph-only 跳过(embedder 与向量索引都不碰;search_codebase 将不可用)。")
+    else:
+        try:
+            embedder = create_embedder(cfg.code_index.embedding)
+        except ValueError as e:  # 零 key(远端档没配 api_key)→ 指三条路,图照建不甩栈
+            zero_key_rc = 2
+            print(f"⚠️ 向量索引跳过:{e}\n"
+                  f"  零 key 三条路:① .env 配上远端 key 后重跑同名命令增量补建;\n"
+                  f"  ② 最小模式:config.yaml 把 embedding.provider 切 sentence_transformers\n"
+                  f"  (先 `uv sync --extra embedding-local`,模型走 hf-mirror 本地下载),并把 reranker.provider 设 off;\n"
+                  f"  ③ 只用结构图:`--graph-only`。\n"
+                  f"  本次继续建结构图(blast_radius / call_chain / repo_map / repo_overview 不依赖向量)。"
+                  f"详见 docs/configuration.md「最小模式」。",
+                  file=sys.stderr)
+
     # ── 0)播种(F5):小版本索引从同线基线索引拷贝起步,增量只重嵌差异文件 ──────
     # 场景:v20 的 5.50.61 出 bug,索引名 bluez-v20-5.50.61;它和基线 bluez-v20 绝大多数
     # 文件相同 → 拷贝基线索引(向量库+manifest)再走增量,只有差异文件重新 embed
     # (远端 embedding 按 token 计费,这条能省下 95%+ 的费用和时间)。幂等:目标已存在不拷。
+    # 向量播种只在向量路要建时(零 key / --graph-only 拷了也没 embedder 增量);图播种不受影响。
     if args.seed:
         seed_vec, target_vec = Path(vs_path) / args.seed, Path(vs_path) / repo_name
         seed_sg = reanchor_data_path("data/structgraph") / args.seed
         target_sg = reanchor_data_path("data/structgraph") / repo_name
-        if target_vec.exists():
-            print(f"播种跳过:{target_vec} 已存在(--seed 只在目标索引不存在时拷贝)。")
-        elif seed_vec.exists():
-            shutil.copytree(seed_vec, target_vec)
-            print(f"已播种向量索引:{args.seed} → {repo_name}(增量只重嵌差异文件)。")
-        else:
-            print(f"⚠️ 播种源不存在:{seed_vec} —— 走正常全量建索引。", file=sys.stderr)
+        if embedder is not None:
+            if target_vec.exists():
+                print(f"播种跳过:{target_vec} 已存在(--seed 只在目标索引不存在时拷贝)。")
+            elif seed_vec.exists():
+                shutil.copytree(seed_vec, target_vec)
+                print(f"已播种向量索引:{args.seed} → {repo_name}(增量只重嵌差异文件)。")
+            else:
+                print(f"⚠️ 播种源不存在:{args.seed} —— 走正常全量建索引。", file=sys.stderr)
         if not target_sg.exists() and seed_sg.exists():
             shutil.copytree(seed_sg, target_sg)
             print(f"已播种结构图:{args.seed} → {repo_name}(增量刷新只重解析改动文件)。")
 
-    # ── 1)向量索引(search_codebase 用)──────────────────────────────────
-    try:
-        embedder = create_embedder(cfg.code_index.embedding)
-    except ValueError as e:  # 零 key(远端档没配 api_key)→ 给最小模式指路,不甩栈
-        print(f"错误:{e}\n"
-              f"  零 key 最小模式:config.yaml 把 embedding.provider 切 sentence_transformers\n"
-              f"  (先 `uv run uv sync --extra embedding-local`,模型走 hf-mirror 本地下载),\n"
-              f"  并把 reranker.provider 设 off;或 .env 配上远端 key。详见 docs/configuration.md「最小模式」。",
-              file=sys.stderr)
-        return 2
-    stats = build_index(repo_path, repo_name, embedder, vs_path, force=args.force)
-    n = stats.get("indexed", stats.get("total_chunks", "?"))
-    print(f"向量索引完成 [{stats.get('mode')}]:{repo_name}  {n} chunk  "
-          f"commit={(stats.get('repo_commit') or '-')[:10]}")
+    # ── 1b)向量索引(search_codebase 用;零 key / --graph-only 时跳过)────
+    if embedder is not None:
+        stats = build_index(repo_path, repo_name, embedder, vs_path, force=args.force)
+        n = stats.get("indexed", stats.get("total_chunks", "?"))
+        print(f"向量索引完成 [{stats.get('mode')}]:{repo_name}  {n} chunk  "
+              f"commit={(stats.get('repo_commit') or '-')[:10]}")
 
-    # ── 2)结构图(blast_radius / call_chain / repo_map 用;可选,失败不致命)──
+    # ── 2)结构图(blast_radius / call_chain / repo_map / repo_overview 用;可选,失败不致命)──
     # 没这条,降级提示「先建 rootrecall index」会把人引向只建了向量索引、结构图仍缺的死路。
     if args.no_graph:
-        print("结构图:--no-graph 跳过(blast_radius / call_chain / repo_map 不可用)。")
-        return 0
+        print("结构图:--no-graph 跳过(blast_radius / call_chain / repo_map / repo_overview 不可用)。")
+        return zero_key_rc
 
     from rootrecall.services.code_index.code_graph import CodeGraph  # CRG 可选 extra,放函数内 lazy import
 
@@ -177,28 +207,29 @@ def cmd_index(args) -> int:
                 print(f"结构图已全量重建({summary.get('reason', '兜底')}):{db_path}。")
         except ImportError as e:  # 与下方全量路径同款:CRG 没装不挡向量索引
             print(f"结构图跳过:CRG 未装({e})。装它:`uv sync --extra code-review-graph`。\n"
-                  f"  向量索引已就绪(search_codebase 可用);blast_radius / call_chain / repo_map 暂不可用。",
+                  f"  {_vector_status(embedder)};blast_radius / call_chain / repo_map / repo_overview 暂不可用。",
                   file=sys.stderr)
         except Exception as e:  # noqa: BLE001 —— 刷新失败不致命:旧图还在,工具按旧图答
             print(f"结构图增量刷新失败(非致命,沿用旧图):{e}\n"
                   f"  可 `rootrecall index <repo> <name> --force` 全量重建。", file=sys.stderr)
-        return 0
+        return zero_key_rc
     if args.force and graph_dir.exists():
         shutil.rmtree(graph_dir)  # --force 清旧图,免 stale 节点混进新图
     print(f"结构图建图中(CRG tree-sitter 解析全仓,大仓需几分钟):{repo_path} …")
     try:
         CodeGraph.build(repo_root=str(repo_path), repo_name=repo_name,
                         base_dir=str(graph_dir.parent))
-        print(f"结构图建好:{db_path}(blast_radius / call_chain / repo_map 可用)。")
+        print(f"结构图建好:{db_path}(blast_radius / call_chain / repo_map / repo_overview 可用"
+              f"{';search_codebase 不可用(向量索引未建)' if embedder is None else ''})。")
     except ImportError as e:  # CRG(code-review-graph extra)没装 → 提示装,不挡向量索引
         print(f"结构图跳过:CRG 未装({e})。装它:`uv sync --extra code-review-graph`。\n"
-              f"  向量索引已就绪(search_codebase 可用);blast_radius / call_chain / repo_map 暂不可用。",
+              f"  {_vector_status(embedder)};blast_radius / call_chain / repo_map / repo_overview 暂不可用。",
               file=sys.stderr)
-    except Exception as e:  # noqa: BLE001 —— 建图失败不致命:向量索引已就绪,结构图工具降级提示
-        print(f"结构图建图失败(非致命,向量索引已就绪):{e}\n"
-              f"  blast_radius / call_chain / repo_map 暂不可用;search_codebase 不受影响。",
+    except Exception as e:  # noqa: BLE001 —— 建图失败不致命;向量路状态如实说,零 key 不谎报「已就绪」
+        print(f"结构图建图失败(非致命,{_vector_status(embedder)}):{e}\n"
+              f"  blast_radius / call_chain / repo_map / repo_overview 暂不可用。",
               file=sys.stderr)
-    return 0
+    return zero_key_rc
 
 
 def cmd_lsp(args) -> int:
@@ -385,6 +416,24 @@ def cmd_memory(args) -> int:
         ok = asyncio.run(svc.invalidate(args.id, scope, reason=args.reason or ""))
         print(f"{'已失效' if ok else '未找到/已失效'}: {args.id}")
         return 0 if ok else 1
+
+    if sub == "backfill":
+        try:
+            rep = asyncio.run(svc.backfill(scope, dry_run=args.dry_run))
+        except (AttributeError, NotImplementedError):
+            print("错误:当前 memory 后端不支持 backfill。", file=sys.stderr)
+            return 2
+        except ValueError as e:  # 零 key → 指路,不甩栈(dry-run 也走这:embedder 不可用连列都列不了)
+            print(f"错误:{e}", file=sys.stderr)
+            return 2
+        if args.dry_run:
+            print(f"待补嵌 {rep['pending']} 条(active 且无向量):")
+            for it in rep["items"]:
+                print(f"  {it['id']}  {it['summary']}")
+            return 0
+        print(f"backfill 完成:待补 {rep['pending']} 条,已补嵌 {rep['embedded']} 条"
+              f"(只更新向量列,不触发置信度/合并;重复跑零变更)。")
+        return 0
 
     print(f"(未知 memory 子命令: {sub})", file=sys.stderr)
     return 1
@@ -735,7 +784,8 @@ def cmd_baseline_add(args) -> int:
     try:
         _os.chdir(_install_root())
         rc = cmd_index(argparse.Namespace(repo_path=str(p), repo_name=name,
-                                          force=args.force, no_graph=args.no_graph, seed=None))
+                                          force=args.force, no_graph=args.no_graph,
+                                          graph_only=args.graph_only, seed=None))
     finally:
         _os.chdir(prev_cwd)
     if rc == 0:
@@ -743,8 +793,9 @@ def cmd_baseline_add(args) -> int:
               f"`baseline checkout <新名> --from {name} --ref <tag> --bug <bug号> --index` 取指定版本;"
               f"任意 bug 目录 `opencode` 直接问(项目+版本会自动从基线开检出)。")
     else:
-        print(f"⚠️ 登记已完成,但索引未建成(rc={rc};多半是缺 embedding key)——补 key 后重跑"
-              f" `baseline add {p}` 同名增量补建,登记不会重复。", file=sys.stderr)
+        print(f"⚠️ 登记已完成,但向量索引未建(rc={rc};多半是缺 embedding key)——上面若已打印"
+              f"「结构图建好」则图系 4 工具(blast_radius / call_chain / repo_map / repo_overview)"
+              f"已可用;补 key 后重跑 `baseline add {p}` 同名增量补建向量,登记不会重复。", file=sys.stderr)
     return rc
 
 
@@ -816,6 +867,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="基线名(默认=相对总目录 ROOTRECALL_CODEBASES 的路径倒序连 '-';systemd → systemd)")
     b_add.add_argument("--force", action="store_true", help="索引强制全量重建")
     b_add.add_argument("--no-graph", action="store_true", help="只建向量索引,不建结构图(快)")
+    b_add.add_argument("--graph-only", action="store_true",
+                       help="只建结构图,不碰 embedder 与向量索引(零 key 可用)")
     b_add.set_defaults(func=cmd_baseline_add)
     b_sync = sub_base_sub.add_parser("sync", help="基线同步:fetch→ff→增量刷索引→(可选)上游三态报告;缺省=全部基线")
     b_sync.add_argument("names", nargs="*", help="要同步的基线名(缺省=全部 baseline)")
@@ -868,7 +921,9 @@ def main(argv: list[str] | None = None) -> int:
     sub_index.add_argument("--seed", default=None, metavar="已有索引名",
                            help="从同线基线索引播种(拷贝向量库+结构图再增量,只重嵌差异文件;省时省钱)")
     sub_index.add_argument("--no-graph", action="store_true",
-                           help="只建向量索引,不建结构图(快;blast_radius/call_chain/repo_map 将不可用)")
+                           help="只建向量索引,不建结构图(快;blast_radius/call_chain/repo_map/repo_overview 将不可用)")
+    sub_index.add_argument("--graph-only", action="store_true",
+                           help="只建结构图,不碰 embedder 与向量索引(零 key 可用;search_codebase 将不可用)")
     sub_index.set_defaults(func=cmd_index)
 
     sub_repo = sub.add_parser("repo", help="[进阶] 仓库注册表:ls/register/rm/resolve + checkout/gc/sync")
@@ -932,7 +987,7 @@ def main(argv: list[str] | None = None) -> int:
     sub_lsp_refs.add_argument("repo_root", nargs="?", default=None, help="仓库根(默认 workspace)")
     sub_lsp.set_defaults(func=cmd_lsp)
 
-    sub_memory = sub.add_parser("memory", help="[进阶] 记忆核心:recall/add/ingest/list/consolidate/invalidate")
+    sub_memory = sub.add_parser("memory", help="[进阶] 记忆核心:recall/add/ingest/list/consolidate/invalidate/backfill")
     sub_memory_sub = sub_memory.add_subparsers(dest="memory_cmd", required=True)
     m_recall = sub_memory_sub.add_parser("recall", help="翻记忆(多路召回)")
     m_recall.add_argument("query", help="自然语言查询")
@@ -968,6 +1023,10 @@ def main(argv: list[str] | None = None) -> int:
     m_inv.add_argument("id")
     m_inv.add_argument("--reason", default="")
     m_inv.add_argument("--repo", default=None)
+    m_bf = sub_memory_sub.add_parser(
+        "backfill", help="补嵌零 key 期间写入的记忆(只补向量列,不触发合并;幂等可重跑)")
+    m_bf.add_argument("--dry-run", action="store_true", help="只列待补条目,不真嵌")
+    m_bf.add_argument("--repo", default=None)
     sub_memory.set_defaults(func=cmd_memory)
 
     sub_mcp = sub.add_parser("mcp", help="[进阶] MCP server(把 RootRecall 能力做成工具给 coding agent 调)")

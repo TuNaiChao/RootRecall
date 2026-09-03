@@ -188,6 +188,36 @@ class NativeMemoryService(MemoryService):
     async def invalidate(self, item_id: str, scope: Scope, *, reason: str = "") -> bool:
         return self._store.set_invalid(item_id)
 
+    async def backfill(self, scope: Scope, *, dry_run: bool = False) -> dict[str, Any]:
+        """补嵌零 key 期间写入的记忆:active 且 embedding 空的条目批量补向量(路线图③)。
+
+        只更新向量列(store.update_embeddings),不触发 Bayes/合并;按 embedder 的
+        batch 分批嵌、整批一提交,单批失败跳过不阻断其余;幂等可重跑(向量已非空的
+        条目不进 pending,重复跑零变更)。
+        """
+        if self._embedder is None:
+            raise ValueError("embedder 不可用(零 key / embed=off):先按 docs/configuration.md"
+                             "「最小模式」配好 embedding 再跑 backfill。")
+        pending = [it for it in self._store.list_items(scope, include_invalid=False)
+                   if it.embedding is None and it.summary]
+        if dry_run:
+            return {"pending": len(pending),
+                    "items": [{"id": it.id[:8], "summary": it.summary[:60]} for it in pending]}
+        embedded = 0
+        batch_limit = getattr(self._embedder, "_batch_limit", None) or 32
+        for i in range(0, len(pending), batch_limit):
+            group = pending[i:i + batch_limit]
+            try:
+                vecs = self._embedder.embed_texts([it.summary for it in group]).tolist()
+            except Exception as e:  # noqa: BLE001 —— 单批 API 失败跳过该批,其余批次照走
+                logger.warning("memory.backfill: 第 %d 批嵌向量失败(跳过 %d 条): %s",
+                               i // batch_limit + 1, len(group), e)
+                continue
+            for it, v in zip(group, vecs, strict=True):
+                it.embedding = v
+            embedded += self._store.update_embeddings(group)
+        return {"pending": len(pending), "embedded": embedded}
+
     def close(self) -> None:
         self._store.close()
 

@@ -435,6 +435,30 @@ class MemoryStore:
                 raise
         return len(rows)
 
+    def update_embeddings(self, items: list[KnowledgeItem]) -> int:
+        """只补 embedding 列(memory backfill 专用):UPDATE 该列 + 同事务双写 vec0。
+
+        与 upsert 的区别:不重建整行 —— 不碰 updated_at / confidence / related 等任何
+        其他字段,天然不触发 Bayes 累加或合并。调用方只喂「已算好向量」的条目
+        (向量为空的在这里是 no-op);幂等可重跑。
+        """
+        rows = [_ki_to_row(it) for it in items if it.embedding]
+        if not rows:
+            return 0
+        with self._wl:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.executemany(
+                    "UPDATE knowledge_items SET embedding=? WHERE id=?",
+                    [(r["embedding"], r["id"]) for r in rows],
+                )
+                self._vec_upsert(rows)  # 同事务双写 vec0(失败降级 loop,不阻断)
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+        return len(rows)
+
     # —— sqlite-vec ANN(建议 A)——
 
     def _ensure_vec_table(self, dim: int) -> bool:
