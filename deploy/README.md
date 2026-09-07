@@ -21,10 +21,11 @@
 mkdir -p ~/.config/systemd/user/
 cp deploy/rootrecall-sync.service deploy/rootrecall-sync.timer ~/.config/systemd/user/
 cp deploy/rootrecall-gc.service deploy/rootrecall-gc.timer ~/.config/systemd/user/
+cp deploy/rootrecall-memory-consolidate.service deploy/rootrecall-memory-consolidate.timer ~/.config/systemd/user/
 # 按需改 service 里的 WorkingDirectory(= RootRecall 安装根)与 sync/analyze 参数;
 # service 已带 EnvironmentFile=.env(--analyze-agent 的 opencode 需要 key 在环境里)
 systemctl --user daemon-reload
-systemctl --user enable --now rootrecall-sync.timer rootrecall-gc.timer
+systemctl --user enable --now rootrecall-sync.timer rootrecall-gc.timer rootrecall-memory-consolidate.timer
 systemctl --user list-timers 'rootrecall-*'     # 看下次触发
 journalctl --user -u rootrecall-sync.service -f # 看同步日志
 ```
@@ -42,6 +43,19 @@ crontab -e
 注意:`sync --analyze` 只出**三态判定报告**(确定性事实);`--analyze-agent` 也只是把
 复核意见写进报告 —— 「哪些真的该合进发行版」走 upstream-merge skill 的人工确认,
 定时器永远不自动改代码/不自动合上游。
+
+## 记忆巩固定时(rootrecall-memory-consolidate)
+
+`rootrecall memory consolidate` 是记忆的「夜间整理」(五个 pass:高频教训升级
+mental_model · 矛盾只标 needs_review · 语义近邻去重候选 · 补丁已合入打折 · stale
+标记),幂等可反复跑。纯本地零模型调用,不需要 key;2026-09-07 提速后 5000 条 0.5s
+量级,每天一次毫无负担。
+
+`deploy/rootrecall-memory-consolidate.*` 样例每天 03:40(错开 00:00 的 sync,巩固跑在
+同步之后的库上)。**给 `--repo-path`** 才会做「补丁已合入上游」检测(pass ④ 的
+reverse-apply 要有 git 仓可查;不给则诚实跳过该 pass)。`--repo` 是记忆池名 = 项目名
+(命名约定见 configuration.md,防版本孤岛)。同 scope 的召回也带自动巩固(命中达标
+即触发),定时器是兜底的全量遍历。
 
 两个真机踩过的坑(2026-08-20 上线实录):
 - systemd user 服务只有极简 PATH,**uv 不在其中**(service 已带

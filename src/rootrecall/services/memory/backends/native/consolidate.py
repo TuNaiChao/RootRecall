@@ -30,7 +30,7 @@ import logging
 import subprocess
 from typing import Any
 
-from rootrecall.services.memory.backends.native.memorize import _same_conclusion, _same_subject
+from rootrecall.services.memory.backends.native.memorize import _norm, _same_conclusion, _same_subject
 from rootrecall.services.memory.backends.native.store import MemoryStore
 from rootrecall.services.memory.schema import Scope
 
@@ -40,21 +40,12 @@ logger = logging.getLogger(__name__)
 _CONTRADICTION_MIN_CONFIDENCE = 0.5
 # 语义近邻去重:cosine 超此阈值才算"疑似重复"。保守(0.92),宁漏不错——误合两个不同 bug 比留两条重复更糟。
 _DUPLICATE_COSINE_THRESHOLD = 0.92
+# 近邻预筛的每条候选数:cosine 阈值前的 top-K 截断(路线图⑤,O(n²)→O(n·K))。
+_NEIGHBOR_TOP_K = 50
 # stale 判定的兜底天数(config 没配时用)。
 _DEFAULT_STALE_AFTER_DAYS = 365.0
 # 补丁已合入的 confidence 折扣(config 没配时用)。
 _DEFAULT_MERGED_DISCOUNT = 0.5
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    """两向量的 cosine 相似度(纯 numpy)。维度不符 → -1(判为不相似)。"""
-    import numpy as np
-
-    va, vb = np.asarray(a, dtype=np.float32), np.asarray(b, dtype=np.float32)
-    if va.shape[0] != vb.shape[0] or va.shape[0] == 0:
-        return -1.0
-    na, nb = float(np.linalg.norm(va)) + 1e-12, float(np.linalg.norm(vb)) + 1e-12
-    return float(np.dot(va, vb) / (na * nb))
 
 
 def consolidate(
@@ -147,6 +138,12 @@ def _detect_contradictions(store: MemoryStore, items: list) -> int:
     只标不裁:不自动选边谁对(语义判断,踩坑#11),打标签让 memory-health-check skill 聚焦提示裁决。
     _same_subject / _same_conclusion 是确定性 helper(memorize.py 复用),判定结果可复现。
     幂等:已带 needs_review 标签的条目不再重复加(集合去重)。
+
+    2026-09-07 提速(路线图⑤):全对两两 O(n²) 改**桶式预分组**再组内两两 —— 与暴力法
+    语义等价(_same_subject 的两条路各有自己的桶,跨桶对不可能同主题):
+    - 桶一(仅 bug_lesson):norm(symptom) 精确相等 —— 同桶内 _same_subject 恒真,只判结论;
+    - 桶二:首证据文件(bug_lesson)/ kind_detail+首证据文件(codebase_fact)—— 组内仍做
+      ±5 行窗判定,且跳过"双方 symptom 都非空"的对(那路只看 symptom,不看证据)。
     """
     # 只在 codebase_fact / bug_lesson 里找矛盾(这两类有"同主题不同结论"语义);domain_knowledge / mental_model 跳过。
     candidates = [
@@ -154,12 +151,32 @@ def _detect_contradictions(store: MemoryStore, items: list) -> int:
         if it.kind in ("codebase_fact", "bug_lesson")
         and it.confidence >= _CONTRADICTION_MIN_CONFIDENCE
     ]
+    by_symptom: dict[tuple, list] = {}
+    by_file: dict[tuple, list] = {}
+    for it in candidates:
+        if it.kind == "bug_lesson":
+            if it.symptom:
+                by_symptom.setdefault(_norm(it.symptom), []).append(it)
+            if it.evidence:
+                by_file.setdefault(("bug", it.evidence[0].file), []).append(it)
+        elif it.evidence:  # codebase_fact:_same_subject 还要求 kind_detail 相等 → 进桶键
+            by_file.setdefault(("fact", it.kind_detail, it.evidence[0].file), []).append(it)
+
+    def _flag(a, b) -> None:
+        if not _same_conclusion(a, b):
+            flagged.add(a.id)
+            flagged.add(b.id)
+
     flagged: set[str] = set()
-    for i, a in enumerate(candidates):
-        for b in candidates[i + 1:]:
-            if _same_subject(a, b) and not _same_conclusion(a, b):
-                flagged.add(a.id)
-                flagged.add(b.id)
+    for bucket in by_symptom.values():  # 同 symptom 桶:_same_subject 恒真
+        for i, a in enumerate(bucket):
+            for b in bucket[i + 1:]:
+                _flag(a, b)
+    for bucket in by_file.values():  # 同文件桶:仍要过 _same_subject(行窗/回退语义)
+        for i, a in enumerate(bucket):
+            for b in bucket[i + 1:]:
+                if not (a.symptom and b.symptom) and _same_subject(a, b):
+                    _flag(a, b)
     for item_id in flagged:
         _add_tag(store, item_id, "needs_review")
     return len(flagged)
@@ -182,15 +199,42 @@ def _union_find(parent: dict[str, str], x: str) -> str:
 def _count_duplicate_clusters(group: list, threshold: float) -> int:
     """一组同 kind 条目里,互相 embedding cosine≥threshold 的并成簇。返回 size≥2 的簇数。
 
-    并查集:遍历所有对,cosine 超阈值就 union;最后数 size≥2 的连通分量。
+    2026-09-07 提速(路线图⑤):全对两两 Python cosine 改**分块矩阵 top-K 预筛** ——
+    归一化后点积即 cosine,每条只保留 top-K 近邻再判阈值,O(n²) 比较变 O(n·K) 进并查集。
+    - 混合维度(换过 embedding model 的存量库)按维度分桶:跨维 cosine 恒 -1(旧 _cosine
+      语义)不可能超阈值 → 直接不比;
+    - 零向量归一化后保持零 → 与谁都不超阈值,同旧语义;
+    - 极端情况:簇成员 > K 时预筛可能漏簇内远端边(每条只看 top-K)——「只报不合、宁漏
+      不错」的本 pass 可接受;现实簇(真重复)远小于 K。
+    与暴力版对拍一致的边界:簇 ≤ K 时结果逐簇相同(单测锁)。
     """
+    import numpy as np
+
+    by_dim: dict[int, list] = {}
+    for it in group:
+        by_dim.setdefault(len(it.embedding), []).append(it)
     parent = {it.id: it.id for it in group}
-    for i, a in enumerate(group):
-        for b in group[i + 1:]:
-            if _cosine(a.embedding, b.embedding) >= threshold:
-                ra, rb = _union_find(parent, a.id), _union_find(parent, b.id)
-                if ra != rb:
-                    parent[ra] = rb
+    for bucket in by_dim.values():
+        n = len(bucket)
+        if n < 2:
+            continue
+        m = np.asarray([it.embedding for it in bucket], dtype=np.float64)
+        norms = np.linalg.norm(m, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        m = m / norms
+        k = min(_NEIGHBOR_TOP_K, n)
+        block = 512  # 分块控内存:sims 每次只有 block×n(n=10万 时约 200MB float64)
+        for s in range(0, n, block):
+            sims = m[s:s + block] @ m.T
+            for r in range(sims.shape[0]):
+                i = s + r
+                sims[r, i] = -1.0  # 排除自身
+                top = np.argpartition(-sims[r], k - 1)[:k]
+                for j in top:
+                    if sims[r, j] >= threshold:
+                        ra, rb = _union_find(parent, bucket[i].id), _union_find(parent, bucket[j].id)
+                        if ra != rb:
+                            parent[ra] = rb
     # 按 root 聚合,数 size≥2 的簇。
     sizes: dict[str, int] = {}
     for it in group:

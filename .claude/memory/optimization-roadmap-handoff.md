@@ -66,10 +66,11 @@ metadata:
   - **领导微观跑分对接**:live 报告 + diff 就是对比表数据源;grep 基线对照组如需,再加 `--mode bm25-baseline`(fts_search 已具备,半天)。
 - **L3 workflow 回归(未做)**:每金标场景一个 case 文件(问题/开仓参数/oracle:期望根因文件、补丁目标、报告必备要素);runner 走 delegate 老 headless 或 MCP 序列回放;scorer 分卡:根因文件命中率、file:line 引用真伪率(逐条对仓核)、补丁 apply 率、工具调用次数(检测 recall-first 短路失效)。样本从 3 金标(wpa P2P / bluez SDP / EATT)扩到 6–8。
 
-**⑤ consolidate 提速 + 调度,1–2 天**
-- 近邻 pass 改 ANN 预筛(每条 top-50 近邻再判 0.92,O(n²)→O(n·50));矛盾 pass 先 `_same_subject` 分组再组内两两。
-- deploy/ 加 `rootrecall-memory-consolidate.timer` 样例(挂 --repo-path 让 pass④ 有仓可查)。
-- 验收:合成 5000 条 consolidate <10s 且与暴力版对拍一致;timer 文档一段。
+**⑤ consolidate 提速 + 调度 —— ✅ 已成(2026-09-07)**
+- 近邻 pass:分块矩阵 **top-K 预筛**(每条 top-50 再判 0.92,O(n²) 比较变 O(n·50) 进并查集;归一化后点积即 cosine;混合维度按 dim 分桶,跨维不比 = 旧 `_cosine` 语义;块 512 控内存)。**与卡的偏差**:没用 sqlite-vec ANN —— n 次 vec0 KNN 往返(估 2.5–10s)不如一次性 BLAS 分块 matmul(5000×16 实测 0.47s 全程),且是**精确** top-K 非近似;sqlite-vec 路留在检索路不动。
+- 矛盾 pass:桶式预分组(symptom 精确桶 + 证据文件×kind_detail 桶,组内两两仍过 `_same_subject` 行窗;跨桶对不可能同主题,**与暴力两两语义等价**,对拍单测锁死,边界例含 symptom/证据/混合路径/行窗内外)。
+- deploy/ 加 `rootrecall-memory-consolidate.{service,timer}`(每日 03:40 错开 sync;`--repo-path` 给 pass④ 仓;纯本地零模型零 key)+ README 一段。
+- 验收:合成 5000 条 consolidate **0.47s**(验收线 10s,20 倍裕量);两 pass 与暴力参考对拍一致(含混合维度/零向量/无向量);3 新测,全量 427 绿,ruff clean。
 
 **⑥ seed 记忆冷启动,1–2 天**
 - `rootrecall memory seed <repo> [--light]`:repo_map 出模块清单,轻 LLM 各写一条 codebase_fact(职责/入口,evidence 带真 file:line);--light 档只摄取 README/CHANGELOG 成 domain_knowledge。全标 `source_tier: inferred` 低置信,真结论经 Bayes 自然接管。

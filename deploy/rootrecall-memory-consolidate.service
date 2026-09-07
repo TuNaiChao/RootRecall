@@ -1,0 +1,14 @@
+[Unit]
+Description=RootRecall memory consolidate (five passes: promote/contradiction/duplicate/merged-upstream/stale)
+
+[Service]
+Type=oneshot
+# WorkingDirectory = RootRecall installation root (uv can find .venv, data/ doesn't drift; CLI reads .env from here)
+WorkingDirectory=%h/Desktop/Agent/RootRecall
+# Consolidation itself is purely local (SQLite + cosine + git), does not call the model, no key needed.
+# systemd user services only have a minimal PATH, uv is installed in ~/.local/bin (the default location of the curl official installer) → explicitly add it to PATH
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+# --repo-path is given to pass ④ (patch already merged upstream) so there is a repo to check against (reverse-apply);
+# Without it, B3 is honestly skipped (not an error). --repo is the memory pool codebase name (naming convention: project name, to prevent version islands).
+ExecStart=/usr/bin/env uv run --no-sync rootrecall memory consolidate --repo wpa --repo-path %h/codebases/v20/wpa_supplicant
+# Multiple repos: multiple pairs of --repo/--repo-path cannot coexist (single-scope per run), one service per repo or run sequentially

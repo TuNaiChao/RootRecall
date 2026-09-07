@@ -1,0 +1,12 @@
+[Unit]
+Description=Run RootRecall memory consolidate nightly
+
+[Timer]
+# "Nighttime tidying up": 03:40 every day, staggered from the 00:00 sync (consolidation should run on a library that has finished syncing)
+OnCalendar=*-*-* 03:40
+# If the scheduled trigger was missed (machine was off), catch up and run once after boot
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
