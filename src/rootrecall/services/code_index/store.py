@@ -198,6 +198,19 @@ class LanceDBStore:
             .when_not_matched_insert_all()
             .execute(rows))
 
+    def fts_search(self, repo: str, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """BM25-only 检索(不走向量路)。表不存在返回 []。
+
+        用途:① eval L2 stub 模式的确定性质量地板(哈希向量是噪声,掺进 RRF 会把
+        BM25 的强信号搅浑 —— 质量门用纯 BM25,管道冒烟另走 hybrid);② 零 key
+        降级检索的潜在底座(向量路不可用时仍有 BM25,镜像 memory 侧的降级设计)。
+        """
+        tbl = self._open_or_create(repo)
+        if tbl is None:
+            return []
+        return tbl.search(query, query_type="fts", vector_column_name="vector",
+                          fts_columns="fts_text").limit(limit).to_list()
+
     def optimize(self, repo: str) -> None:
         """把未索引的新行折叠进 FTS/向量索引。bulk upsert 后调一次,否则新行走 flat scan 慢路径。"""
         tbl = self._open_or_create(repo)

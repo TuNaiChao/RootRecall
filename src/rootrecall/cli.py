@@ -439,6 +439,27 @@ def cmd_memory(args) -> int:
     return 1
 
 
+def cmd_eval(args) -> int:
+    """回归 eval 入口(路线图④):L2 检索回归现在可用,L3 workflow 回归尚未落地。
+
+      rootrecall eval run --level retrieval [--mode stub|live]
+    stub(默认/CI):零 key 确定性管道回归(HashEmbedder + rerank off + 记忆召回断言),秒级;
+    live:真 key 全指标跑分,报告落 data/eval/<时间戳>-retrieval.json 并与上一份 diff(跑分对比底座)。
+    """
+    if args.level == "workflow":
+        print("L3 workflow 回归尚未落地(路线图④后半):金标场景 case 文件 + scorer 出分卡,"
+              "先做 L2 retrieval(它也是 L3 的检索底座)。", file=sys.stderr)
+        return 2
+    from rootrecall.services.code_index.eval.l2 import run_l2_live, run_l2_stub
+
+    if args.mode == "live":
+        ok, text = run_l2_live(eval_set=args.eval_set, repo=args.repo or "rootrecall")
+    else:
+        ok, text = run_l2_stub(eval_set=args.eval_set)
+    print(text)
+    return 0 if ok else 1
+
+
 def cmd_mcp(args) -> int:
     """启动 MCP server(把 RootRecall 能力做成工具给 coding agent 调;stdio 或 http)。
 
@@ -1028,6 +1049,17 @@ def main(argv: list[str] | None = None) -> int:
     m_bf.add_argument("--dry-run", action="store_true", help="只列待补条目,不真嵌")
     m_bf.add_argument("--repo", default=None)
     sub_memory.set_defaults(func=cmd_memory)
+
+    sub_eval = sub.add_parser("eval", help="[进阶] 回归 eval:检索质量不被改动磨掉的回归网")
+    sub_eval_sub = sub_eval.add_subparsers(dest="eval_cmd", required=True)
+    e_run = sub_eval_sub.add_parser("run", help="跑一个 level(检索回归 / workflow 回归)")
+    e_run.add_argument("--level", default="retrieval", choices=["retrieval", "workflow"],
+                       help="retrieval=L2 检索回归(workflow=L3 尚未落地,先诚实报错)")
+    e_run.add_argument("--mode", default="stub", choices=["stub", "live"],
+                       help="stub=零 key 确定性管道回归(进 CI);live=真 key 跑分+报告落 data/eval/ 带 diff")
+    e_run.add_argument("--repo", default=None, help="live 模式查哪个索引(默认 rootrecall;索引根=src/rootrecall)")
+    e_run.add_argument("--eval-set", default=None, help="评测集 JSONL(默认源码树 eval/sets/rootrecall.jsonl)")
+    e_run.set_defaults(func=cmd_eval)
 
     sub_mcp = sub.add_parser("mcp", help="[进阶] MCP server(把 RootRecall 能力做成工具给 coding agent 调)")
     sub_mcp_sub = sub_mcp.add_subparsers(dest="mcp_cmd", required=True)

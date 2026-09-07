@@ -16,3 +16,13 @@
 {"query": "远端重排器对候选用 cross-encoder 重新打分排序", "gold": ["services/code_index/retrieval.py:RemoteReranker.rerank", "services/code_index/retrieval.py:retrieve"], "tier": "L2"}
 {"query": "全量重建索引时用临时目录原子切换避免写坏", "gold": ["services/code_index/index.py:build_index", "services/code_index/index.py:_full_rebuild"], "tier": "L2"}
 {"query": "算评测指标的 recall 和 nDCG", "gold": ["services/code_index/eval/scorer.py:recall_at_k", "services/code_index/eval/scorer.py:ndcg_at_k"], "tier": "L2"}
+{"query": "get_app_config 应用配置加载与缓存", "gold": ["platform/config.py:get_app_config"], "tier": "L1"}
+{"query": "cmd_index 索引子命令编排向量与图", "gold": ["cli.py:cmd_index"], "tier": "L1"}
+{"query": "consolidate 记忆巩固的五个 pass", "gold": ["services/memory/backends/native/consolidate.py:consolidate"], "tier": "L1"}
+{"query": "known_codebases 列本机已知代码库三源并集", "gold": ["services/repos/registry.py:known_codebases"], "tier": "L1"}
+{"query": "ensure_mirror 基线 bare 镜像就绪", "gold": ["services/repos/mirror.py:ensure_mirror"], "tier": "L1"}
+{"query": "make_id 记忆条目稳定 id 让同主题合并", "gold": ["services/memory/schema.py:make_id"], "tier": "L2"}
+{"query": "KnowledgeItem 知识项带证据溯源与来源可信度分档", "gold": ["services/memory/schema.py:KnowledgeItem"], "tier": "L2"}
+{"query": "which module parses source files into symbols using tree-sitter grammars", "gold": ["services/code_index/parser.py:parse_file", "services/code_index/parser.py:parse_repo"], "tier": "L2"}
+{"query": "sanitize the environment before executing commands in the local sandbox", "gold": ["platform/sandbox/env_policy.py:build_sandbox_env", "platform/sandbox/env_policy.py:is_blocked_env_name"], "tier": "L2"}
+{"query": "memory recall multi-way retrieval fused with decay and confidence", "gold": ["services/memory/backends/native/recall.py:recall"], "tier": "L2"}

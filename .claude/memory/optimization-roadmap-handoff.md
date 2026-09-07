@@ -58,11 +58,13 @@ metadata:
 
 ### 阶段二·质量与体验(合计约 8–12 天)
 
-**④ e2e 回归 eval harness(重头),L2 2–3 天 + L3 3–5 天**
-- L2 检索回归(纯 Python 零 LLM,秒级,**进 CI**):固定 query 集 20–30 条(从三轮实测会话捞真实提问,中英混合)+ 期望命中文件/符号 oracle,断言 search_codebase top-5 与 memory_recall 命中。
-- L3 workflow 回归(真 LLM,手动/nightly):每金标场景一个 case 文件(问题/开仓参数/oracle:期望根因文件、补丁目标、报告必备要素);runner 可走 delegate 老 headless 路径或 MCP 序列回放;scorer 出分卡:根因文件命中率、file:line 引用真伪率(逐条对仓核)、补丁 apply 率、工具调用次数(回归检测 recall-first 短路失效)。样本从 3 金标(wpa P2P / bluez SDP / EATT)扩到 6–8。
-- 入口 `rootrecall eval run --level retrieval|workflow`,报告落 data/eval/,两版 diff。
-- 验收:L2 进 CI 稳定绿;**harness 自检**:故意改坏一处(如关 rerank)分数要掉。
+**④ e2e 回归 eval harness(重头)—— L2 ✅ 已成(2026-09-07);L3 未做(3–5 天,规格如下)**
+- **L2 检索回归已成**:入口 `rootrecall eval run --level retrieval --mode stub|live`(cli.py cmd_eval);评测集 `eval/sets/rootrecall.jsonl` 28 条(18→28,补英文+L2 概念题;索引根=src/rootrecall 是 gold 路径契约)。harness 在 `services/code_index/eval/l2.py`。
+  - **stub(进 CI,零 key 秒级)**:HashEmbedder(512 维带符号特征哈希;64 维计数版实测 hit@5 只有 0.18-0.36,RRF 被碰撞噪声污染,教训在 l2.py 注释)+ rerank off。**双门**:BM25 强门(经新增 `LanceDBStore.fts_search`,排除哈希噪声稀释;纯 BM25 排不过短包装 chunk 是已知边界 —— L1≈0.62 是 BM25 单路真实水平,拉满靠 rerank+先验,归 live)+ hybrid 冒烟弱门;外加 oracle 有效性守卫(gold 不在索引=改了符号没同步 eval 集,直接失败点名)+ memory_recall 播种断言。阈值全按实测 −5pt 校准(注释里带实测数)。
+  - **live(有 key 机器,跑分对比底座)**:真 embedder+reranker 全指标,报告落 `data/eval/<ts>-retrieval.json` + 自动与上一份 diff;硬下限 hit@5≥0.80/mrr≥0.68/L1_mrr≥0.92。**2026-09-07 真机基线:hit@5=0.857 / mrr=0.738 / L1 mrr=1.000 / L2 hit@5=0.733(28 条),两跑全等(live 亦确定)**。前置:`rootrecall index src/rootrecall rootrecall` 建真索引。
+  - **验收全过**:CI 加 eval 步骤;harness 自检入单测(test_eval_l2.py:打坏 FTS 查询→强门必红;哈希跨实例确定);干净 worktree(无 .env/key)CLI+单测全绿且分数与主仓一致。3 新测全量 424 绿。
+  - **领导微观跑分对接**:live 报告 + diff 就是对比表数据源;grep 基线对照组如需,再加 `--mode bm25-baseline`(fts_search 已具备,半天)。
+- **L3 workflow 回归(未做)**:每金标场景一个 case 文件(问题/开仓参数/oracle:期望根因文件、补丁目标、报告必备要素);runner 走 delegate 老 headless 或 MCP 序列回放;scorer 分卡:根因文件命中率、file:line 引用真伪率(逐条对仓核)、补丁 apply 率、工具调用次数(检测 recall-first 短路失效)。样本从 3 金标(wpa P2P / bluez SDP / EATT)扩到 6–8。
 
 **⑤ consolidate 提速 + 调度,1–2 天**
 - 近邻 pass 改 ANN 预筛(每条 top-50 近邻再判 0.92,O(n²)→O(n·50));矛盾 pass 先 `_same_subject` 分组再组内两两。

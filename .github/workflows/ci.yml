@@ -50,3 +50,8 @@ jobs:
         run: |
           uv sync --frozen --extra code-review-graph --extra mcp
           uv run pytest -q
+
+      # L2 检索回归(路线图④):零 key 确定性 stub 门(BM25 强门 + hybrid 冒烟 + memory 断言)。
+      # 语义质量跑分(live)要 key,不进 CI,在有 .env 的机器跑 `--mode live`。
+      - name: L2 retrieval eval (stub)
+        run: uv run rootrecall eval run --level retrieval --mode stub

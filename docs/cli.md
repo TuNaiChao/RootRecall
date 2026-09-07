@@ -14,6 +14,7 @@
 | [`index`](#index) | 进阶 | 给仓库建索引(向量 + 结构图;`--seed` 播种增量)—— `baseline add` 的底层 |
 | [`repo`](#repo) | 进阶 | 仓库注册表与生命周期:ls / register / resolve / checkout / sync / gc —— `baseline` 家族的底层 |
 | [`memory`](#memory) | 进阶 | 记忆管理:recall / add / ingest / list / consolidate / invalidate / backfill |
+| [`eval`](#eval) | 进阶 | 回归 eval:检索质量不被改动磨掉的回归网(stub 进 CI / live 跑分落盘) |
 | [`mcp serve`](#mcp-serve) | 进阶 | 启动 MCP server(17 个工具的入口) |
 | [`models`](#models) | 进阶 | 列出配置的模型 + 角色路由(验证配置) |
 | [`lsp`](#lsp) | 进阶 | L2 精确导航(clangd)自检 / 冒烟 |
@@ -77,6 +78,20 @@ uv run rootrecall index <repo_path> [repo_name] [--force] [--seed <基线索引�
 
 零 key(没配 embedding key)时向量路诚实跳过、**结构图照建不再连坐**(等价自动走 `--graph-only`,rc=2 提示向量未建,指三条路:配 key 重跑增量补建 / 切本地 embedding / 只用结构图)。
 结构图需要 `uv sync --extra code-review-graph`;没装会非致命降级(向量索引照建,提示装法)。
+
+## eval(进阶)
+
+L2 检索回归 eval(路线图④):固定 query 集 + 期望命中 oracle,守护检索质量不被后续改动磨掉。
+
+```bash
+uv run rootrecall eval run --level retrieval --mode stub   # 零 key 确定性回归(CI 同款,秒级)
+uv run rootrecall eval run --level retrieval --mode live   # 真 key 跑分:全指标 + 报告落 data/eval/ + 与上一份 diff
+```
+
+- 评测集:`eval/sets/rootrecall.jsonl`(28 条,中英混合 L1 符号名 / L2 概念问法两档),索引根 = `src/rootrecall`(gold 路径契约)。
+- **stub 模式**(进 CI):HashEmbedder(512 维带符号特征哈希,确定性、零 API)+ rerank off。测的是**管道**回归与 oracle 有效性(gold id 必须都在索引里),不测语义质量 —— 双门:BM25 质量地板(强,排除哈希向量噪声对 RRF 的稀释)+ hybrid 全管线冒烟(弱);外加 memory_recall 侧播种断言。harness 自检已入单测:故意打坏 FTS 查询,门必须变红。
+- **live 模式**(有 key 的机器):真 embedder + reranker 全指标(recall/precision/MRR/nDCG/hit),按硬下限判过(run 前先 `rootrecall index src/rootrecall rootrecall` 建真索引);报告落 `data/eval/<时间戳>-retrieval.json` 并自动与上一份 diff(涨跌一眼见)—— 跑分对比的底座。
+- `--level workflow`(L3 workflow 回归)尚未落地,先诚实报错。
 
 重跑语义:两条索引都增量 —— 向量按 manifest 只重嵌改动文件(重嵌前先清该文件的旧行,符号改名不留重复行;已删除的文件行也会被清掉);结构图按 `built_head` 快照只重解析改动 + 未跟踪新增的文件(社区按需重检测),无改动直接跳过。补丁打进工作区或合入后,重跑本命令刷新即可;`--force` 才全量重建(图拿不准的场合也会自动退回全量)。
 
