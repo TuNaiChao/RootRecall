@@ -316,5 +316,5 @@ def _diff_previous(out_dir: Path, cur_file: Path, cur: dict) -> str:
         if k in cur_o:
             d = cur_o[k] - prev.get(k, cur_o[k])
             arrow = "↑" if d > 1e-9 else ("↓" if d < -1e-9 else "=")
-            parts.append(f"{k} {round(cur_o[k], 3)}({arrow}{abs(d):+.3f})" if arrow != "=" else f"{k} {round(cur_o[k], 3)}(=)")
+            parts.append(f"{k} {round(cur_o[k], 3)}({arrow}{abs(d):.3f})" if arrow != "=" else f"{k} {round(cur_o[k], 3)}(=)")
     return f"对比上一份({prevs[-1].name}):" + " ".join(parts)

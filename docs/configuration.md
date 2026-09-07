@@ -59,6 +59,11 @@ sandbox:
 
 `repo` 是默认查的索引名(= 建索引时的名字)。三个子块:
 
+> 环境变量 `ROOTRECALL_QUERY_REWRITE=1` 可开检索前轻 LLM 查询改写(title 角色,中文口语 →
+> 英文关键词 + 符号名;零 key / 失败自动降级原查询)。**默认关**:2026-09-07 A/B 实测负增益
+> (hit@5 0.857→0.821 / mrr 0.738→0.662),按「有增益才上」纪律不启用,详见 [cli.md](cli.md)
+> 「查询改写」节。
+
 ### embedding(向量从哪来)
 
 ```yaml
@@ -129,38 +134,6 @@ memory:
 ```
 
 切后端 = 放一个 `services/memory/backends/<名>/` 实现(暴露 `BACKEND_CLASS`)+ 改 `backend` 名;拒绝静默回退(配错会明报,不偷偷降级)。
-
-## delegate — 委托 coding agent(降级参考线)
-
-老 workflow 编排器(bug-rca / research CLI)委托 opencode 时的配置。**主线(skill + MCP 工具)不经过这层** —— opencode 直接被使用者驱动,不经 RootRecall 调度;此段仅老路径使用。
-
-```yaml
-delegate:
-  backend: opencode            # opencode(有实现)| omp / claude(占位,未实现)
-  opencode:
-    bin: opencode
-    model: uniontech-ai/glm-5.2
-    auto_approve: true         # 无头模式必须
-    format: json               # NDJSON 事件流(绕开思考模式不支持结构化产出的坑)
-    timeout: 1200
-    config: config/opencode_rootrecall.json
-    retry_max: 2               # 瞬时网络错自动续 session 重试
-    fallback_model: uniontech-ai/deepseek-v4-flash
-```
-
-## runtime — 长流程护栏(降级参考线)
-
-RootRecall 自跑 workflow 时的护栏(断点续跑 + token 预算 + 工具输出外化)。主线同样不经过这层。
-
-```yaml
-runtime:
-  enabled: true
-  checkpoint_backend: sqlite   # memory(仅测)| sqlite(持久,断点续跑)
-  token_budget:
-    max_tokens: 1000000        # 每 run 总额;软警告 → 硬停(剥工具调用自然收尾)
-  tool_output:
-    externalize_min_chars: 30000  # 超长工具输出写盘 + 摘要代替
-```
 
 ## mcp — 对外开门方式
 
@@ -239,3 +212,43 @@ quickstart 检测到未配 `DASHSCOPE_API_KEY` 会打印上面 a/b 两条路的�
 
 - [MCP 工具参考](mcp-tools.md) — 这套配置撑起来的 17 个工具
 - [CLI 参考](cli.md) — 验证配置(`rootrecall models`)与建索引
+
+## 附录 · legacy(老 workflow 编排器配置,主线不走)
+
+> 以下是 RootRecall 早期「自跑 workflow 编排器」时代的配置(delegate 委托 opencode 跑
+> bug-rca/research CLI + runtime 长流程护栏)。**这条线建过又砍掉了**(2026-08 harness
+> 转向:RootRecall 不调度 agent,读码改码重活全归宿主 opencode,自己只做记忆 + 确定性
+> 工具 + 交付硬门),模块与配置保留在仓里作**演化记录**,新读者不需要读懂、新配置不需要
+> 动它;主线(skill + MCP 工具)完全不经过这两段。
+
+## delegate — 委托 coding agent(降级参考线)
+
+老 workflow 编排器(bug-rca / research CLI)委托 opencode 时的配置。**主线(skill + MCP 工具)不经过这层** —— opencode 直接被使用者驱动,不经 RootRecall 调度;此段仅老路径使用。
+
+```yaml
+delegate:
+  backend: opencode            # opencode(有实现)| omp / claude(占位,未实现)
+  opencode:
+    bin: opencode
+    model: uniontech-ai/glm-5.2
+    auto_approve: true         # 无头模式必须
+    format: json               # NDJSON 事件流(绕开思考模式不支持结构化产出的坑)
+    timeout: 1200
+    config: config/opencode_rootrecall.json
+    retry_max: 2               # 瞬时网络错自动续 session 重试
+    fallback_model: uniontech-ai/deepseek-v4-flash
+```
+
+## runtime — 长流程护栏(降级参考线)
+
+RootRecall 自跑 workflow 时的护栏(断点续跑 + token 预算 + 工具输出外化)。主线同样不经过这层。
+
+```yaml
+runtime:
+  enabled: true
+  checkpoint_backend: sqlite   # memory(仅测)| sqlite(持久,断点续跑)
+  token_budget:
+    max_tokens: 1000000        # 每 run 总额;软警告 → 硬停(剥工具调用自然收尾)
+  tool_output:
+    externalize_min_chars: 30000  # 超长工具输出写盘 + 摘要代替
+```

@@ -52,6 +52,44 @@ _UA = "rootrecall/0.1 (+https://github.com/TuNaiChao/RootRecall)"
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# §1b 查询改写(⑧ HyDE-lite,路线图⑧;默认关,A/B 有增益才考虑开)
+# ──────────────────────────────────────────────────────────────────────────
+
+_REWRITE_PROMPT = """把下面这句代码检索查询(常为中文口语)改写成一个更适合代码检索的查询:
+英文技术关键词 + 可能的符号/函数命名(snake_case 或 CamelCase)。只输出改写后的一行查询,不要解释。
+
+查询:{q}"""
+
+_REWRITE_CACHE: dict[str, str] = {}  # 进程内 query→改写缓存(eval 同集两轮不重复花钱)
+
+
+def rewrite_enabled() -> bool:
+    """ROOTRECALL_QUERY_REWRITE=1/true 才启用(默认关:热路径加 LLM 要 A/B 证明了增益才开)。"""
+    return os.environ.get("ROOTRECALL_QUERY_REWRITE", "").lower() in ("1", "true", "yes")
+
+
+def _rewrite_query(query: str) -> str:
+    """检索前轻 LLM 改写(title 便宜角色);失败/零 key → 原样返回(诚实降级,不挡检索)。"""
+    if not rewrite_enabled() or not query.strip():
+        return query
+    if query in _REWRITE_CACHE:
+        return _REWRITE_CACHE[query]
+    try:
+        from rootrecall.platform.models import create_chat_model
+
+        resp = create_chat_model(role="title").invoke(_REWRITE_PROMPT.format(q=query))
+        text = (resp.content or "").strip().splitlines()[0].strip() if hasattr(resp, "content") else ""
+        out = text or query
+    except Exception as e:  # noqa: BLE001 —— 零 key / 模型挂:降级原查询,检索不受影响
+        logger.warning("query rewrite 失败,用原查询:%s", e)
+        return query
+    if len(out) > 500:  # 模型话痨防御:改写不该比原查询长多少
+        out = query
+    _REWRITE_CACHE[query] = out
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # §1 结果数据结构
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -310,6 +348,8 @@ def retrieve(
     返回 RetrievalResult(hits, out_mode)。out_mode 可观测:
       hybrid+rerank(正常)/ hybrid(无 reranker)/ rerank-failed:hybrid(reranker 报错降级)/ empty(无候选)。
     """
+    # Stage 0:查询改写(⑧,默认关;开启时 embedding/BM25/rerank 三路统一用改写后的查询)
+    query = _rewrite_query(query)
     # Stage 1:hybrid 召回(LanceDB 原生 BM25 + 向量 + RRF)
     qvec = embedder.embed_query(query)
     candidates = store.hybrid_search(repo, qvec, query, limit=candidate_top_n, where=where)

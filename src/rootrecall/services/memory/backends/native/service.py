@@ -188,6 +188,26 @@ class NativeMemoryService(MemoryService):
     async def invalidate(self, item_id: str, scope: Scope, *, reason: str = "") -> bool:
         return self._store.set_invalid(item_id)
 
+    async def seed(self, scope: Scope, *, codebase: str, repo_path: str | None = None,
+                   light: bool = False, max_modules: int = 12) -> dict[str, Any]:
+        """冷启动播种(路线图⑥):低置信 inferred 卡填新仓的记忆真空,真结论经 Bayes 接管。
+
+        light:摄取 README/CHANGELOG 成 domain_knowledge(general 共享池,不需要图);
+        否则从 codebase 的结构图社区出模块清单写 codebase_fact(evidence 带真 file:line)。
+        幂等:同 summary → 同 id → 已存在跳过,重复跑零变更。
+        """
+        from rootrecall.services.memory.backends.native import seed as seed_mod
+
+        if light:
+            if not repo_path:
+                raise ValueError("--light 需要 --repo-path(README 在仓库根,注册表查不到时显式给)。")
+            gscope = Scope(owner=scope.owner, codebase="general")  # domain_knowledge 共享池约定
+            return seed_mod.seed_light(repo_path, repo=codebase, scope=gscope,
+                                       store=self._store, embedder=self._embedder)
+        return seed_mod.seed_from_graph(codebase, scope=scope, store=self._store,
+                                        max_modules=max_modules, repo_path=repo_path,
+                                        embedder=self._embedder)
+
     async def backfill(self, scope: Scope, *, dry_run: bool = False) -> dict[str, Any]:
         """补嵌零 key 期间写入的记忆:active 且 embedding 空的条目批量补向量(路线图③)。
 

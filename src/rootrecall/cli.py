@@ -435,6 +435,32 @@ def cmd_memory(args) -> int:
               f"(只更新向量列,不触发置信度/合并;重复跑零变更)。")
         return 0
 
+    if sub == "seed":
+        try:
+            if args.light:
+                rep = asyncio.run(svc.seed(scope, codebase=args.repo or args.codebase,
+                                           repo_path=args.repo_path, light=True))
+            else:
+                rep = asyncio.run(svc.seed(scope, codebase=args.codebase,
+                                           repo_path=args.repo_path, light=False,
+                                           max_modules=args.max_modules))
+        except (AttributeError, NotImplementedError):
+            print("错误:当前 memory 后端不支持 seed。", file=sys.stderr)
+            return 2
+        except ValueError as e:  # 图未建 / CRG 未装 / 轻 LLM 不可用 → 指路,不甩栈
+            print(f"错误:{e}", file=sys.stderr)
+            return 2
+        if args.light:
+            print(f"seed(--light)完成:写 {rep['seeded']} 条 domain_knowledge(general 池,"
+                  f"inferred 低置信;跳过 {rep['skipped']})。")
+        else:
+            print(f"seed 完成:模块 {rep['modules']} 个,写 {rep['seeded']} 条 codebase_fact"
+                  f"(inferred 低置信,真结论经 Bayes 接管;跳过 {rep['skipped']})。")
+        if rep.get("no_vector"):
+            print("  ℹ️ 当前零 key:种子卡暂无向量(只走 BM25);配 key 后跑 "
+                  "`uv run rootrecall memory backfill` 补嵌。", file=sys.stderr)
+        return 0
+
     print(f"(未知 memory 子命令: {sub})", file=sys.stderr)
     return 1
 
@@ -1048,6 +1074,13 @@ def main(argv: list[str] | None = None) -> int:
         "backfill", help="补嵌零 key 期间写入的记忆(只补向量列,不触发合并;幂等可重跑)")
     m_bf.add_argument("--dry-run", action="store_true", help="只列待补条目,不真嵌")
     m_bf.add_argument("--repo", default=None)
+    m_seed = sub_memory_sub.add_parser(
+        "seed", help="冷启动播种:结构图社区→轻 LLM 写 codebase_fact(inferred 低置信);--light 只摄取 README/CHANGELOG")
+    m_seed.add_argument("codebase", help="已建图的 codebase 名(社区清单从图开;--light 时只是记忆的 repo 标识)")
+    m_seed.add_argument("--light", action="store_true", help="不建图档:摄取 README/CHANGELOG 成 domain_knowledge(general 池)")
+    m_seed.add_argument("--repo-path", default=None, help="仓库根(--light 必给;full 档给了则 evidence 剥成仓内相对路径)")
+    m_seed.add_argument("--max-modules", type=int, default=12, help="full 档最多播几个模块(按社区大小取)")
+    m_seed.add_argument("--repo", default=None, help="记忆池名(默认 = codebase;约定=项目名)")
     sub_memory.set_defaults(func=cmd_memory)
 
     sub_eval = sub.add_parser("eval", help="[进阶] 回归 eval:检索质量不被改动磨掉的回归网")

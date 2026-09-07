@@ -242,6 +242,35 @@ backfill 即补嵌:**只更新向量列**(不触发置信度累加 / 合并),按
 整批一提交,幂等可重跑(重复跑零变更)。`--dry-run` 只列待补条目。embedder 不可用时诚实
 报错指路(见「最小模式」)。
 
+### seed — 冷启动播种
+
+```bash
+uv run rootrecall memory seed <codebase> [--repo-path <仓库根>] [--max-modules 12]  # full:图社区 → 轻 LLM 写 codebase_fact
+uv run rootrecall memory seed <codebase> --light --repo-path <仓库根>              # light:README/CHANGELOG → domain_knowledge
+```
+
+新仓接入时记忆库是空的,recall-first 无从短路 —— seed 播一批**低置信起步卡**(全标
+`source_tier: inferred`,初始置信 0.35)填真空;agent 读码坐实后以 delegate 档重提同主题,
+Bayes 一票压过播种卡(真结论自然接管)。full 档从结构图社区(Leiden 模块)出清单,evidence
+带**真 file:line**(从图节点取,LLM 只措辞不编锚点);`--light` 不需要图,摄取 README/CHANGELOG
+成 domain_knowledge(general 共享池)。幂等:同 summary → 同 id,重复跑零变更;零 key 时种子卡
+暂无向量(配 key 后 `memory backfill` 补)。
+
+### 查询改写(⑧ HyDE-lite,默认关)
+
+`ROOTRECALL_QUERY_REWRITE=1` 时,检索前用轻 LLM(title 角色)把口语化中文查询改写成英文
+关键词 + 符号名,三路(embedding/BM25/rerank)统一用改写后的查询;进程内缓存同查询。
+零 key / 失败 → 原查询照常检索(诚实降级)。**默认关**:2026-09-07 A/B(live eval 28 条)
+实测改写为负增益(hit@5 0.857→0.821、mrr 0.738→0.662、L1 mrr 1.000→0.942),按「有增益才上」
+纪律保持关闭;换更强改写模型时可再开此开关复测(报告 diff 自动对比)。
+
+新仓接入时记忆库是空的,recall-first 无从短路 —— seed 播一批**低置信起步卡**(全标
+`source_tier: inferred`,初始置信 0.35)填真空;agent 读码坐实后以 delegate 档重提同主题,
+Bayes 一票压过播种卡(真结论自然接管)。full 档从结构图社区(Leiden 模块)出清单,evidence
+带**真 file:line**(从图节点取,LLM 只措辞不编锚点);`--light` 不需要图,摄取 README/CHANGELOG
+成 domain_knowledge(general 共享池)。幂等:同 summary → 同 id,重复跑零变更;零 key 时种子卡
+暂无向量(配 key 后 `memory backfill` 补)。
+
 ## mcp serve(进阶)
 
 启动 MCP server —— 17 个工具的入口,详见 [MCP 工具参考](mcp-tools.md)。

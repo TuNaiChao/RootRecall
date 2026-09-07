@@ -29,7 +29,7 @@ RootRecall 不是一个「装好就能用」的 exe,它交给 opencode 的是四
 |---|---|---|---|
 | **MCP 工具** | 可被模型直接调用的函数,带名字、参数说明、返回结果 | **手** —— 能做的动作 | 17 个工具:`search_codebase` / `memory_recall` / `validate_patch`……见 [mcp-tools.md](mcp-tools.md) |
 | **skill** | 一份 `SKILL.md` 说明书,教模型「遇到什么问题、按什么顺序、组合哪些工具」 | **菜谱** —— 知道先切菜还是先热锅 | 8 个 skill:`bug-rca` / `backport` / `onboarding`……路由判据见 [skill-routing-matrix.md](skill-routing-matrix.md) |
-| **agent block** | 预制角色:指定模型 + 权限 + 禁令(比如只读 skill 禁 bash) | **工牌** —— 能进哪个车间、能碰哪台机器 | 10 个 block:8 个 subagent(`rootrecall-bug-rca` / `rootrecall-compare`……,要硬门隔离或点名时委派)+ 2 个隐藏内部 stage(`rootrecall-localize` / `rootrecall-repair`,老 delegate 流水线专用) |
+| **agent block** | 预制角色:指定模型 + 权限 + 禁令(比如只读 skill 禁 bash) | **工牌** —— 能进哪个车间、能碰哪台机器 | 10 个 block:8 个 subagent(`rootrecall-bug-rca` / `rootrecall-compare`……,要硬门隔离或点名时委派)+ 2 个隐藏内部 stage(`rootrecall-localize` / `rootrecall-repair`,老 delegate 流水线遗留,仅演化记录用) |
 | **配置/接线** | 让以上三样被 opencode「发现」的注册动作 | **入职引导单** —— 新员工第一天该去哪报到 | `install --global`(推荐)+ [quickstart.sh](../scripts/quickstart.sh);项目级备选 [wire_opencode.sh](../scripts/wire_opencode.sh) |
 
 业界共识是**工具和菜谱要配套用(use both)**:工具给「能力」,skill 给「流程」。只有工具,模型知道能做什么但不知道标准工序;只有菜谱没有工具,模型知道工序却没家伙可使。philschmid 的总结一针见血:*"Skills complement MCP by teaching agents when and how to combine those tools for specific workflows. Use both."*

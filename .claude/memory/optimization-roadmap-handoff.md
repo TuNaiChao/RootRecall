@@ -72,14 +72,19 @@ metadata:
 - deploy/ 加 `rootrecall-memory-consolidate.{service,timer}`(每日 03:40 错开 sync;`--repo-path` 给 pass④ 仓;纯本地零模型零 key)+ README 一段。
 - 验收:合成 5000 条 consolidate **0.47s**(验收线 10s,20 倍裕量);两 pass 与暴力参考对拍一致(含混合维度/零向量/无向量);3 新测,全量 427 绿,ruff clean。
 
-**⑥ seed 记忆冷启动,1–2 天**
-- `rootrecall memory seed <repo> [--light]`:repo_map 出模块清单,轻 LLM 各写一条 codebase_fact(职责/入口,evidence 带真 file:line);--light 档只摄取 README/CHANGELOG 成 domain_knowledge。全标 `source_tier: inferred` 低置信,真结论经 Bayes 自然接管。
-- 验收:seed 后 recall「X 模块在哪」命中且体检卡 tier=inferred 可辨。
+**⑥ seed 记忆冷启动 —— ✅ 已成(2026-09-07)**
+- `rootrecall memory seed <codebase> [--repo-path P] [--max-modules 12] [--light]`:full 档走 `architecture_overview().communities`(裸 communities() 的 sample_members 实测全空,真机抓出)→ 轻 LLM(title 角色)每模块一条 codebase_fact(evidence 真 file:line 从图节点取,GraphNode 对象/dict 双形态兼容);--light 摄取 README/CHANGELOG(各截 8k)成 domain_knowledge 入 general 池。全标 `source_tier: inferred`(conf 0.35),真结论经 Bayes 接管。
+- **幂等双层**:id 级(同 summary 同 id)+ **锚点级**(同 scope 已 seed 卡的首证据文件 → 跳过该模块;真 LLM 两次措辞不同会让 id 级失效,锚点级是真机幂等的关键,重跑实测写 0 跳 6)。
+- 验收(单测 + 真机):seed 后 recall「检索融合的模块在哪」top 命中(conf=0.35、tier=inferred、evidence=chunker.py:73 真行号);重跑零新增;--light 真机写 5 条;图未建/零 key/缺 README 均诚实指路。3 单测,全量 434 绿。
 
-**⑦ delegate/runtime 双轨清理(推荐轻档),轻档 0.5 天 / 重档 2–3 天**
-- 轻档(现在做):代码不动,文档彻底收口——configuration.md 两段挪「附录·legacy」;介绍材料统一口径「建过又砍掉,保留作演化记录」。
-- 重档(等下个大版本):物理删 delegate/runtime 及测试,先发 deprecation,远端机器还依赖时别删。
-- 验收:轻档=新读者从正文任何路径不会把 delegate 当活路径;重档=删后测试全绿。
+**⑦ delegate/runtime 双轨清理 —— 轻档 ✅ 已成(2026-09-07);重档待下个大版本(物理删 + deprecation,远端机器还依赖时别删)**
+- 轻档落地:configuration.md 两段(delegate/runtime)挪文末「附录·legacy」并加统一口径框(**建过又砍掉,保留作演化记录;主线不走**);项目介绍.md 架构形态节补「模块留仓作演化记录」;mcp-guide.md 隐藏 stage 措辞改「遗留,仅演化记录用」。正文任何路径不再把 delegate 当活路径(验收过:正文零 delegate/runtime 出现)。
+
+**⑧ HyDE/query 改写 —— ✅ 机制已成,默认关(A/B 负增益,按纪律不上)**
+- 实现:`_rewrite_query` 挂 `retrieve()` 入口(retrieval.py),`ROOTRECALL_QUERY_REWRITE=1` 开启;title 便宜角色;进程内缓存;零 key/失败降级原查询;话痨防御(>500 字符丢弃)。eval 与 search_codebase 共用此路,A/B 免费获得。
+- **A/B 结果(2026-09-07 live eval 28 条,真机)**:改写开 → hit@5 0.857→**0.821**、mrr 0.738→**0.662**、L1 mrr 1.000→**0.942**、L2 hit@5 0.733→0.667 —— 全面负增益,连 live 硬下限都跌破(mrr 0.662 < 0.68,门正确变红 = 顺带二次验证了 eval harness 敏感性)。按「有增益才上」纪律**默认保持关**;换更强改写模型再开开关复测(报告 diff 自动对比)。4 单测(默认旁路/开启+缓存/失败降级/话痨防御)。
+
+**至此 11 项中 ①②③④L2⑤⑥⑦轻⑧ 全部落地;剩 L3 workflow 回归(3–5 天大件)、⑨⑩⑪(按触发条件)、⑦重档(下个大版本)。**
 
 ### 阶段三·择机(按触发条件启动,合计约 5 天)
 
